@@ -1,10 +1,15 @@
 ---
 layout: base.njk
 title: Countries
+permalink: /
 ---
-<h1>{{ countries | length }} countries</h1>
+<h1>{{ api.countries | length }} countries</h1>
+
 <ul>
-{% for country in countries | slice(20) | first %}
-  <li>{{ country.emoji }} {{ country.name }} — {{ country.continent.name }}</li>
-{% endfor %}
+{%- for country in api.countries %}
+  <li>
+    <a href="/country/{{ country.code | lower }}/">{{ country.emoji }} {{ country.name }}</a>
+    <small>— {{ country.continent.name }}</small>
+  </li>
+{%- endfor %}
 </ul>

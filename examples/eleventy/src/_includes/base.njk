@@ -1,5 +1,18 @@
 <!doctype html>
 <html lang="en">
-  <head><meta charset="utf-8"><title>{{ title }}</title></head>
-  <body>{{ content | safe }}</body>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ title }}</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 44rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+      ul { list-style: none; padding: 0; }
+      li { padding: .25rem 0; }
+      a { color: inherit; }
+    </style>
+  </head>
+  <body>
+    <p><a href="/">← All countries</a></p>
+    {{ content | safe }}
+  </body>
 </html>

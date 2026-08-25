@@ -1,5 +1,5 @@
 _site
 node_modules
-# The frozen data is a build artefact here. Commit it instead if you prefer
-# reproducible builds without network access.
-src/queries/*.json
+# Frozen data is a build artefact here. Commit it instead if you would rather
+# have reproducible builds that need no network access.
+src/_data/*.json

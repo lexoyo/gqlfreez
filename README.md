@@ -15,15 +15,18 @@ no plugin to install and nothing to configure in your generator.
 
 ## Install
 
+Download a binary from the [releases page](https://github.com/lexoyo/gqlfreez/releases) —
+Linux, macOS and Windows, x64 and arm64. No runtime, no toolchain, no dependencies.
+
 ```bash
-npm i -D gqlfreez        # then: "prebuild": "gqlfreez ./src"
-npx gqlfreez ./src       # or, without installing
-cargo install gqlfreez   # or, if you have Rust
+curl -fsSL https://github.com/lexoyo/gqlfreez/releases/latest/download/gqlfreez-linux-x64 \
+  -o /usr/local/bin/gqlfreez && chmod +x /usr/local/bin/gqlfreez
 ```
 
-No Rust toolchain required — the npm package ships a prebuilt binary per platform.
-Standalone binaries are on the [releases page](https://github.com/lexoyo/gqlfreez/releases)
-for CI images without Node.
+macOS: swap `linux-x64` for `darwin-arm64` (Apple silicon) or `darwin-x64` (Intel).
+
+> Publishing to npm and crates.io is on the roadmap, so `npx gqlfreez` and
+> `cargo install gqlfreez` do **not** work yet. Until then, the binary is the way in.
 
 ## Use
 
@@ -107,20 +110,22 @@ from the environment, and from `.env` / `.env.local` unless you pass `--no-doten
 ## In CI
 
 ```yaml
-- uses: actions/setup-node@v4
-  with: { node-version: 20, cache: npm }
-- run: npm ci
-- run: npm run build          # "prebuild" runs gqlfreez
+- name: Install gqlfreez
+  run: |
+    curl -fsSL https://github.com/lexoyo/gqlfreez/releases/latest/download/gqlfreez-linux-x64 \
+      -o /usr/local/bin/gqlfreez
+    chmod +x /usr/local/bin/gqlfreez
+
+- name: Freeze the data
+  run: gqlfreez ./src
   env:
     API_TOKEN: ${{ secrets.API_TOKEN }}
+
+- run: npm run build     # or hugo, or zola build, or whatever you use
 ```
 
-Without Node:
-
-```yaml
-- run: curl -fsSL https://github.com/lexoyo/gqlfreez/releases/latest/download/gqlfreez-linux-x64 -o /usr/local/bin/gqlfreez && chmod +x /usr/local/bin/gqlfreez
-- run: gqlfreez ./data --endpoint https://example.com/graphql
-```
+Pin a version rather than `latest` if you want reproducible builds — swap
+`releases/latest/download` for `releases/download/v0.1.0`.
 
 Useful flags: `--check` fails when a frozen file is out of date (without writing),
 `--dry-run` writes nothing at all, `--concurrency` defaults to `1` because shared WordPress
@@ -129,24 +134,21 @@ hosting falls over otherwise, `--delay` puts a pause between paginated requests.
 Exit codes: `0` fine, `1` a query failed, `2` a configuration problem, `3` `--check` found
 something out of date.
 
-> **npm and optional dependencies.** If `npm ci` reports `Cannot find module
-> @gqlfreez/linux-x64`, your `package-lock.json` was generated on another platform — a known
-> npm issue that also hits esbuild and Rollup. `rm -rf node_modules package-lock.json && npm i`
-> fixes it, or point `GQLFREEZ_BINARY_PATH` at a downloaded binary.
-
 ## What it does not do yet
 
 **v1 freezes queries that take no parameters.** If you need one query per entity
 (`post(slug: $slug)`), variable support is next on the roadmap.
 
-1. Query variables
-2. Multiple named endpoints (`# @endpoint:` per file)
-3. Collecting every failure instead of stopping at the first
-4. Full retry policy (exponential backoff, jitter)
-5. Shared fragments via `#import`
-6. Backward and nested pagination
-7. Query merging across files
-8. Service mode (stdin/stdout RPC) for SSG plugins with hot reload
+1. **Publish to npm and crates.io**, so `npx gqlfreez` and `cargo install gqlfreez` work
+   (the npm wrapper is written, under `wrappers/node`, but nothing is published yet)
+2. Query variables
+3. Multiple named endpoints (`# @endpoint:` per file)
+4. Collecting every failure instead of stopping at the first
+5. Full retry policy (exponential backoff, jitter)
+6. Shared fragments via `#import`
+7. Backward and nested pagination
+8. Query merging across files
+9. Service mode (stdin/stdout RPC) for SSG plugins with hot reload
 
 ## Prior art
 

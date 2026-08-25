@@ -5,10 +5,10 @@
   "scripts": {
     "prebuild": "gqlfreez ./src --endpoint https://countries.trevorblades.com/graphql",
     "build": "eleventy",
-    "start": "npm run prebuild && eleventy --serve"
+    "prestart": "npm run prebuild",
+    "start": "eleventy --serve"
   },
   "devDependencies": {
-    "@11ty/eleventy": "^3.0.0",
-    "gqlfreez": "^0.1.0"
+    "@11ty/eleventy": "^3.0.0"
   }
 }
