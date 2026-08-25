@@ -89,10 +89,12 @@ jobs:
         run: ./bin/gqlfreez-linux-x64 --version
 
       # It is built against musl, so it must work with no shared libraries at all.
+      # Note: a static-pie is still static — ldd does not say "not a dynamic executable"
+      # for one, so ask `file` instead.
       - name: It is statically linked
         run: |
           file bin/gqlfreez-linux-x64
-          ldd bin/gqlfreez-linux-x64 2>&1 | grep -q "not a dynamic executable" \
+          file bin/gqlfreez-linux-x64 | grep -qE 'static-pie linked|statically linked' \
             || { echo "the binary is dynamically linked"; exit 1; }
 
       - name: It freezes a real query
