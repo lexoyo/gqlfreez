@@ -23,10 +23,11 @@ the query is all it takes for `api.countries` to be available in every template.
 
 `prebuild` runs `gqlfreez` before Eleventy, so `npm run build` does the right thing.
 
-## A page per entry
+## Going further
 
-`src/country.njk` uses the standard Eleventy idiom for turning a data array into pages —
-the same one every headless-WordPress tutorial reaches for:
+Nothing here is specific to gqlfreez: once the data is a global, it is plain Eleventy. To
+get one page per entry — what a headless-WordPress blog does for each post — use the usual
+idiom in a template of your own:
 
 ```yaml
 pagination:
@@ -35,8 +36,6 @@ pagination:
   alias: country
 permalink: "/country/{{ country.code | lower }}/"
 ```
-
-250 countries in, 251 pages out.
 
 ## Swapping in your own CMS
 

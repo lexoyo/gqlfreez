@@ -1,15 +1,18 @@
 ---
-layout: base.njk
-title: Countries
 permalink: /
 ---
-<h1>{{ api.countries | length }} countries</h1>
-
-<ul>
-{%- for country in api.countries %}
-  <li>
-    <a href="/country/{{ country.code | lower }}/">{{ country.emoji }} {{ country.name }}</a>
-    <small>— {{ country.continent.name }}</small>
-  </li>
-{%- endfor %}
-</ul>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>{{ api.countries | length }} countries</title>
+  </head>
+  <body>
+    <h1>{{ api.countries | length }} countries</h1>
+    <ul>
+    {%- for country in api.countries %}
+      <li>{{ country.emoji }} {{ country.name }} — {{ country.capital or "no capital" }}</li>
+    {%- endfor %}
+    </ul>
+  </body>
+</html>
