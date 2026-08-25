@@ -1,0 +1,11 @@
+# Same query, same tool, a generator that knows nothing about Node.
+{
+  countries {
+    code
+    name
+    emoji
+    continent {
+      name
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "gqlfreez",
+  "version": "0.0.0",
+  "description": "Freeze GraphQL query results into JSON files, next to the queries.",
+  "bin": "lib/index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lexoyo/gqlfreez.git"
+  },
+  "author": "Alex Hoyau",
+  "license": "GPL-3.0",
+  "optionalDependencies": {
+    "@gqlfreez/linux-x64": "0.0.0",
+    "@gqlfreez/linux-arm64": "0.0.0",
+    "@gqlfreez/darwin-x64": "0.0.0",
+    "@gqlfreez/darwin-arm64": "0.0.0",
+    "@gqlfreez/windows-x64": "0.0.0"
+  },
+  "keywords": ["graphql", "static-site", "jamstack", "build", "cli"],
+  "bugs": { "url": "https://github.com/lexoyo/gqlfreez/issues" },
+  "homepage": "https://github.com/lexoyo/gqlfreez#readme"
+}

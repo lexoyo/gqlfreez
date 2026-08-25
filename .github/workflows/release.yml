@@ -1,0 +1,129 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (for a dry run)"
+        required: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.package }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            package: linux-x64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            package: linux-arm64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            package: darwin-x64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            package: darwin-arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            package: windows-x64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install cross-compilation tooling
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
+            sudo apt-get install -y gcc-aarch64-linux-gnu
+            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+            echo "CC_aarch64_unknown_linux_musl=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          fi
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p out
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp target/${{ matrix.target }}/release/gqlfreez.exe out/gqlfreez-${{ matrix.package }}.exe
+          else
+            cp target/${{ matrix.target }}/release/gqlfreez out/gqlfreez-${{ matrix.package }}
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gqlfreez-${{ matrix.package }}
+          path: out/*
+
+  verify:
+    name: Verify the released binary
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: gqlfreez-linux-x64
+          path: bin
+      - name: Make it runnable
+        run: chmod +x bin/gqlfreez-linux-x64
+
+      # A release binary that cannot answer --version is worse than no release at all.
+      - name: It runs
+        run: ./bin/gqlfreez-linux-x64 --version
+
+      # It is built against musl, so it must work with no shared libraries at all.
+      - name: It is statically linked
+        run: |
+          file bin/gqlfreez-linux-x64
+          ldd bin/gqlfreez-linux-x64 2>&1 | grep -q "not a dynamic executable" \
+            || { echo "the binary is dynamically linked"; exit 1; }
+
+      - name: It freezes a real query
+        run: |
+          ./bin/gqlfreez-linux-x64 ./examples/zola/data \
+            --endpoint https://countries.trevorblades.com/graphql
+          test -s examples/zola/data/countries.json
+          grep -q '"Andorra"' examples/zola/data/countries.json
+          echo "--- second run must change nothing ---"
+          ./bin/gqlfreez-linux-x64 ./examples/zola/data \
+            --endpoint https://countries.trevorblades.com/graphql --check
+
+  release:
+    name: Publish the GitHub release
+    needs: verify
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Collect
+        run: |
+          mkdir -p release
+          find artifacts -type f -exec cp {} release/ \;
+          ls -la release
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true

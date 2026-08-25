@@ -1,0 +1,13 @@
+{% set data = load_data(path="data/countries.json") %}
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>Countries</title></head>
+  <body>
+    <h1>{{ data.countries | length }} countries</h1>
+    <ul>
+      {% for country in data.countries | slice(end=20) %}
+        <li>{{ country.emoji }} {{ country.name }} — {{ country.continent.name }}</li>
+      {% endfor %}
+    </ul>
+  </body>
+</html>

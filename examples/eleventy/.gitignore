@@ -1,0 +1,5 @@
+_site
+node_modules
+# The frozen data is a build artefact here. Commit it instead if you prefer
+# reproducible builds without network access.
+src/queries/*.json

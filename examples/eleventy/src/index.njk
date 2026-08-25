@@ -1,0 +1,10 @@
+---
+layout: base.njk
+title: Countries
+---
+<h1>{{ countries | length }} countries</h1>
+<ul>
+{% for country in countries | slice(20) | first %}
+  <li>{{ country.emoji }} {{ country.name }} — {{ country.continent.name }}</li>
+{% endfor %}
+</ul>

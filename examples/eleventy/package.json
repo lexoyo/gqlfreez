@@ -1,0 +1,14 @@
+{
+  "name": "gqlfreez-example-eleventy",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prebuild": "gqlfreez ./src --endpoint https://countries.trevorblades.com/graphql",
+    "build": "eleventy",
+    "start": "npm run prebuild && eleventy --serve"
+  },
+  "devDependencies": {
+    "@11ty/eleventy": "^3.0.0",
+    "gqlfreez": "^0.1.0"
+  }
+}
