@@ -1,6 +1,6 @@
 [package]
 name = "gqlfreez"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2021"
 description = "Freeze GraphQL query results into JSON files, next to the queries."
 homepage = "https://github.com/lexoyo/gqlfreez"
