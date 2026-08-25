@@ -23,7 +23,10 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
             package: linux-x64
-          - os: ubuntu-latest
+          # A native ARM runner rather than cross-compiling: aws-lc-sys (rustls' crypto
+          # provider) is C code, and linking it for musl with the glibc cross-toolchain
+          # fails on __fprintf_chk and friends.
+          - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
             package: linux-arm64
           - os: macos-latest
@@ -44,16 +47,11 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - name: Install cross-compilation tooling
+      - name: Install musl tooling
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools
-          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
-            sudo apt-get install -y gcc-aarch64-linux-gnu
-            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-            echo "CC_aarch64_unknown_linux_musl=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-          fi
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
