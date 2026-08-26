@@ -16,7 +16,7 @@ no plugin to install and nothing to configure in your generator.
 ## Install
 
 Download a binary from the [releases page](https://github.com/lexoyo/gqlfreez/releases) —
-Linux, macOS and Windows, x64 and arm64. No runtime, no toolchain, no dependencies.
+Linux and macOS on x64 and arm64, Windows on x64. No runtime, no toolchain, no dependencies.
 
 ```bash
 curl -fsSL https://github.com/lexoyo/gqlfreez/releases/latest/download/gqlfreez-linux-x64 \
@@ -76,8 +76,12 @@ paginate and strips it from the output. If you did, it is kept and rebuilt to de
 merged result — and `hasNextPage` is copied from the last page actually fetched, never
 forced to `false`.
 
-Forward pagination only. One connection per query can be nested; several side by side each
-get their own derived query.
+Forward pagination only. Connections side by side each get their own derived query. A
+connection sitting under a list — `posts { nodes { comments { nodes } } }` — cannot be
+paginated, and gqlfreez says so rather than writing a first page and calling it done.
+
+Paging stops at `--max-pages` (20, so 2000 nodes at the default `--page-size` of 100) and
+**fails** rather than writing a truncated file. Raise both for a large archive.
 
 > **Watch out for silent caps.** Some servers cap connections without telling you: WPGraphQL
 > returns 100 nodes for `posts(first: 2000)` with a valid HTTP 200 and no error. `gqlfreez`
@@ -88,7 +92,8 @@ get their own derived query.
 
 `gqlfreez` reads your existing [graphql-config](https://the-guild.dev/graphql/config/docs).
 Declarative formats only (`.graphqlrc`, `.graphqlrc.{yml,yaml,json,toml}`,
-`graphql.config.*`) — a binary cannot evaluate a `.js` / `.ts` config.
+`graphql.config.*`) — a binary cannot evaluate a `.js` / `.ts` config. In a multi-project
+config, one project — or one named `default` — is used; several are refused.
 
 ```yaml
 schema:
