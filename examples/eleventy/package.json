@@ -4,9 +4,9 @@
   "type": "module",
   "scripts": {
     "prebuild": "gqlfreez ./src --endpoint https://countries.trevorblades.com/graphql",
-    "build": "eleventy",
+    "build": "eleventy --input=src",
     "prestart": "npm run prebuild",
-    "start": "eleventy --serve"
+    "start": "eleventy --input=src --serve"
   },
   "devDependencies": {
     "@11ty/eleventy": "^3.0.0"

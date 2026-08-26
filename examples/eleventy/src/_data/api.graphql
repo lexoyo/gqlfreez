@@ -1,19 +1,10 @@
-# This file lives in Eleventy's `_data` folder, so gqlfreez writes `api.json`
-# right beside it — and Eleventy picks that up on its own as the `api` global.
-# There is no glue code anywhere in this project.
-#
-# No `first` argument, so gqlfreez would walk every page if this API paginated.
+# Eleventy loads `api.json` from `_data/` as the `api` global, so gqlfreez
+# writing it right here is the whole integration.
 {
   countries {
     code
     name
     emoji
     capital
-    continent {
-      name
-    }
-    languages {
-      name
-    }
   }
 }
