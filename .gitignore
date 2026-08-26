@@ -1,5 +1,13 @@
 /target
 node_modules
-*.tmp
+*.gqlfreez-tmp
 .env
 .env.local
+
+# Examples. The frozen .json is a build artefact here; in your own project, commit it
+# instead if you want builds that need no network access.
+examples/eleventy/_site
+examples/eleventy/package-lock.json
+examples/eleventy/src/_data/*.json
+examples/zola/public
+examples/zola/data/*.json

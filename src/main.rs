@@ -86,10 +86,6 @@ struct Cli {
     #[arg(long)]
     dry_run: bool,
 
-    /// Overwrite a `.json` that gqlfreez did not produce.
-    #[arg(long)]
-    force: bool,
-
     /// Do not load `.env` / `.env.local`.
     #[arg(long)]
     no_dotenv: bool,
@@ -230,7 +226,6 @@ fn build_options(cli: &Cli, logger: Logger) -> Result<Options, Error> {
         max_response_bytes: cli.max_response_mb * 1024 * 1024,
         allow_partial: cli.allow_partial,
         envelope: cli.envelope,
-        force: cli.force,
         check: cli.check,
         dry_run: cli.dry_run,
         logger,

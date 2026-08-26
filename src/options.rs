@@ -21,7 +21,6 @@ pub struct Options {
     pub max_response_bytes: u64,
     pub allow_partial: bool,
     pub envelope: bool,
-    pub force: bool,
     pub check: bool,
     pub dry_run: bool,
     pub logger: Logger,
