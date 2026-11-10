@@ -8,7 +8,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
-use serde_json::{Map, Value};
+use handlebars::template::{Parameter, TemplateElement};
+use handlebars::{Context, Handlebars, PathSeg};
+use serde_json::{json, Map, Value};
 
 use crate::config::{self, Format, Resolved};
 use crate::discover::{Query, QUERY_EXTENSIONS};
@@ -40,6 +42,7 @@ pub struct Split {
     file: Template,
     format: Format,
     front_matter: Vec<(String, Shape)>,
+    templates: Templates,
     /// The query, relative to `dir`: what the marker of every generated file says.
     owner: String,
 }
@@ -171,7 +174,9 @@ fn load(
         message: format!("collection {key}: {message}"),
     };
     let list = parse_path(&raw.list).map_err(|e| fail(format!("list: {e}")))?;
-    let file = Template::parse(&raw.file).map_err(|e| fail(format!("file: {e}")))?;
+    let mut templates = Templates::new();
+    let file =
+        Template::parse(&raw.file, &mut templates).map_err(|e| fail(format!("file: {e}")))?;
     let Value::Object(front_matter) = raw.front_matter.clone() else {
         return Err(fail(
             "frontMatter must be an object (a front matter is a table of keys)".into(),
@@ -180,7 +185,7 @@ fn load(
     let front_matter = front_matter
         .into_iter()
         .map(|(k, v)| {
-            Shape::parse(v)
+            Shape::parse(v, &mut templates)
                 .map(|s| (k.clone(), s))
                 .map_err(|e| fail(format!("frontMatter.{k}: {e}")))
         })
@@ -209,6 +214,7 @@ fn load(
         file,
         format: raw.format,
         front_matter,
+        templates,
         owner,
     })
 }
@@ -339,113 +345,104 @@ fn follow<'a>(mut value: &'a Value, path: &[String]) -> Found<'a> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-enum Part {
-    Text(String),
-    Item,
-    Index,
-    Field(Vec<String>),
+/// The slots, compiled once per collection. Rendered with `{ "item": …, "index": … }`.
+#[derive(Debug)]
+struct Templates(Handlebars<'static>);
+
+impl Templates {
+    fn new() -> Self {
+        let mut registry = Handlebars::new();
+        registry.register_escape_fn(handlebars::no_escape);
+        registry.set_strict_mode(true);
+        Templates(registry)
+    }
 }
 
-/// A string with `{field}`, `{@item}` and `{@index}` slots; `{{` and `}}` are literal braces.
+/// A slot that is a plain path, like `{{item.author.name}}`.
 #[derive(Debug, Clone, PartialEq)]
-struct Template(Vec<Part>);
+struct Slot {
+    raw: String,
+    path: Vec<String>,
+}
+
+/// A string with Mustache slots.
+#[derive(Debug)]
+struct Template {
+    name: String,
+    /// The string is this slot and nothing else.
+    lone: Option<Slot>,
+    /// The plain paths outside any block: their values are checked before rendering, as
+    /// Handlebars renders a null as nothing and an object as `[object]`.
+    slots: Vec<Slot>,
+}
 
 impl Template {
-    fn parse(raw: &str) -> Result<Self, String> {
-        let mut parts = vec![];
-        let mut text = String::new();
-        let mut chars = raw.chars().peekable();
-        while let Some(c) = chars.next() {
-            match c {
-                '{' if chars.peek() == Some(&'{') => {
-                    chars.next();
-                    text.push('{');
-                }
-                '}' if chars.peek() == Some(&'}') => {
-                    chars.next();
-                    text.push('}');
-                }
-                '}' => return Err(format!("{raw:?}: lone }}, write }}}} for a brace")),
-                '{' => {
-                    let mut slot = String::new();
-                    loop {
-                        match chars.next() {
-                            Some('}') => break,
-                            Some('{') | None => {
-                                return Err(format!("{raw:?}: unclosed {{, write {{{{ for a brace"))
-                            }
-                            Some(c) => slot.push(c),
-                        }
-                    }
-                    if !text.is_empty() {
-                        parts.push(Part::Text(std::mem::take(&mut text)));
-                    }
-                    parts.push(match slot.as_str() {
-                        "@item" => Part::Item,
-                        "@index" => Part::Index,
-                        s if s.starts_with('@') => {
-                            return Err(format!(
-                                "{raw:?}: unknown {{{s}}}, only {{@item}} and {{@index}} exist"
-                            ))
-                        }
-                        s => Part::Field(parse_path(s).map_err(|e| format!("{raw:?}: {e}"))?),
-                    });
-                }
-                c => text.push(c),
-            }
-        }
-        if !text.is_empty() {
-            parts.push(Part::Text(text));
-        }
-        Ok(Template(parts))
+    fn parse(raw: &str, templates: &mut Templates) -> Result<Self, String> {
+        let compiled = handlebars::Template::compile(raw).map_err(|e| format!("{raw:?}: {e}"))?;
+        let slots: Vec<Slot> = compiled.elements.iter().filter_map(slot).collect();
+        let lone = match compiled.elements.as_slice() {
+            [element @ TemplateElement::Expression(_)] => slot(element),
+            _ => None,
+        };
+        let name = templates.0.get_templates().len().to_string();
+        templates.0.register_template(&name, compiled);
+        Ok(Template { name, lone, slots })
     }
 
     /// A string that is a single slot keeps the type of the value it points to.
-    fn typed(&self, item: &Value, index: usize) -> Result<Value, String> {
-        match self.0.as_slice() {
-            [Part::Item] => Ok(output::sorted(item)),
-            [Part::Index] => Ok(Value::from(index)),
-            [Part::Field(path)] => field(item, path).map(output::sorted),
-            _ => self.text(item, index).map(Value::String),
+    fn typed(&self, templates: &Templates, context: &Context) -> Result<Value, String> {
+        match &self.lone {
+            Some(slot) => field(context.data(), slot).map(output::sorted),
+            None => self.text(templates, context).map(Value::String),
         }
     }
 
-    fn text(&self, item: &Value, index: usize) -> Result<String, String> {
-        let mut out = String::new();
-        for part in &self.0 {
-            let (value, name) = match part {
-                Part::Text(t) => {
-                    out.push_str(t);
-                    continue;
-                }
-                Part::Index => {
-                    out.push_str(&index.to_string());
-                    continue;
-                }
-                Part::Item => (item, "@item".to_owned()),
-                Part::Field(path) => (field(item, path)?, path.join(".")),
-            };
-            match value {
-                Value::String(s) => out.push_str(s),
-                Value::Number(n) => out.push_str(&n.to_string()),
-                Value::Bool(b) => out.push_str(&b.to_string()),
-                _ => {
-                    return Err(format!(
-                        "{{{name}}} is an object or a list, it cannot go inside a text"
-                    ))
-                }
+    fn text(&self, templates: &Templates, context: &Context) -> Result<String, String> {
+        for slot in &self.slots {
+            if let Value::Object(_) | Value::Array(_) = field(context.data(), slot)? {
+                return Err(format!(
+                    "{{{{{}}}}} is an object or a list, it cannot go inside a text",
+                    slot.raw
+                ));
             }
         }
-        Ok(out)
+        templates
+            .0
+            .render_with_context(&self.name, context)
+            .map_err(|e| e.reason().to_string())
     }
 }
 
-fn field<'a>(item: &'a Value, path: &[String]) -> Result<&'a Value, String> {
-    match follow(item, path) {
+fn slot(element: &TemplateElement) -> Option<Slot> {
+    let (TemplateElement::Expression(expression) | TemplateElement::HtmlExpression(expression)) =
+        element
+    else {
+        return None;
+    };
+    if expression.block || !expression.params.is_empty() || !expression.hash.is_empty() {
+        return None;
+    }
+    let Parameter::Path(handlebars::Path::Relative((segments, raw))) = &expression.name else {
+        return None;
+    };
+    let path = segments
+        .iter()
+        .map(|segment| match segment {
+            PathSeg::Named(name) => Some(name.clone()),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(Slot {
+        raw: raw.clone(),
+        path,
+    })
+}
+
+fn field<'a>(context: &'a Value, slot: &Slot) -> Result<&'a Value, String> {
+    match follow(context, &slot.path) {
         Found::Value(v) => Ok(v),
-        Found::Null => Err(format!("{{{}}} is null", path.join("."))),
-        Found::Missing(why) => Err(format!("{{{}}}: {why}", path.join("."))),
+        Found::Null => Err(format!("{{{{{}}}}} is null", slot.raw)),
+        Found::Missing(why) => Err(format!("{{{{{}}}}}: {why}", slot.raw)),
     }
 }
 
@@ -459,33 +456,33 @@ enum Shape {
 }
 
 impl Shape {
-    fn parse(value: Value) -> Result<Self, String> {
+    fn parse(value: Value, templates: &mut Templates) -> Result<Self, String> {
         Ok(match value {
-            Value::String(s) => Shape::Template(Template::parse(&s)?),
+            Value::String(s) => Shape::Template(Template::parse(&s, templates)?),
             Value::Object(map) => Shape::Object(
                 map.into_iter()
-                    .map(|(k, v)| Shape::parse(v).map(|s| (k, s)))
+                    .map(|(k, v)| Shape::parse(v, templates).map(|s| (k, s)))
                     .collect::<Result<_, _>>()?,
             ),
             Value::Array(items) => Shape::Array(
                 items
                     .into_iter()
-                    .map(Shape::parse)
+                    .map(|v| Shape::parse(v, templates))
                     .collect::<Result<_, _>>()?,
             ),
             other => Shape::Literal(other),
         })
     }
 
-    fn fill(&self, item: &Value, index: usize) -> Result<Value, String> {
+    fn fill(&self, templates: &Templates, context: &Context) -> Result<Value, String> {
         Ok(match self {
             Shape::Literal(v) => v.clone(),
-            Shape::Template(t) => t.typed(item, index)?,
-            Shape::Object(entries) => Value::Object(fill_entries(entries, item, index)?),
+            Shape::Template(t) => t.typed(templates, context)?,
+            Shape::Object(entries) => Value::Object(fill_entries(entries, templates, context)?),
             Shape::Array(items) => Value::Array(
                 items
                     .iter()
-                    .map(|s| s.fill(item, index))
+                    .map(|s| s.fill(templates, context))
                     .collect::<Result<_, _>>()?,
             ),
         })
@@ -494,12 +491,12 @@ impl Shape {
 
 fn fill_entries(
     entries: &[(String, Shape)],
-    item: &Value,
-    index: usize,
+    templates: &Templates,
+    context: &Context,
 ) -> Result<Map<String, Value>, String> {
     entries
         .iter()
-        .map(|(k, s)| s.fill(item, index).map(|v| (k.clone(), v)))
+        .map(|(k, s)| s.fill(templates, context).map(|v| (k.clone(), v)))
         .collect()
 }
 
@@ -563,12 +560,13 @@ fn check_file_name(name: &str) -> Result<(), String> {
 
 impl Split {
     fn render(&self, item: &Value, index: usize) -> Result<(String, String), String> {
-        let name = self.file.text(item, index)?;
+        let context = Context::from(json!({ "item": item, "index": index }));
+        let name = self.file.text(&self.templates, &context)?;
         check_file_name(&name)?;
         let front_matter = without_nulls(Value::Object(fill_entries(
             &self.front_matter,
-            item,
-            index,
+            &self.templates,
+            &context,
         )?));
         let body = match self.format {
             Format::Toml => toml::to_string(&front_matter).map_err(|e| e.to_string())?,
@@ -938,57 +936,98 @@ mod tests {
         assert!(parse_path("").is_err());
     }
 
+    fn context(item: Value, index: usize) -> Context {
+        Context::from(json!({ "item": item, "index": index }))
+    }
+
+    fn typed(raw: &str, item: Value, index: usize) -> Result<Value, String> {
+        let mut templates = Templates::new();
+        let t = Template::parse(raw, &mut templates).unwrap();
+        t.typed(&templates, &context(item, index))
+    }
+
     #[test]
-    fn templates_parse_slots_and_escaped_braces() {
-        let t = Template::parse("/blog/{slug}/{{x}}").unwrap();
+    fn slots_are_plain_paths_whatever_the_spacing() {
+        let mut templates = Templates::new();
+        let t = Template::parse("{{ item.author.name }}", &mut templates).unwrap();
         assert_eq!(
-            t.0,
-            vec![
-                Part::Text("/blog/".into()),
-                Part::Field(vec!["slug".into()]),
-                Part::Text("/{x}".into())
-            ]
+            t.lone,
+            Some(Slot {
+                raw: "item.author.name".into(),
+                path: vec!["item".into(), "author".into(), "name".into()]
+            })
         );
-        assert!(Template::parse("{slug").is_err());
-        assert!(Template::parse("a}b").is_err());
-        assert!(Template::parse("{@nope}").is_err());
+        let t = Template::parse("/blog/{{item.slug}}/", &mut templates).unwrap();
+        assert!(t.lone.is_none());
+        assert_eq!(t.slots.len(), 1);
+        assert!(Template::parse("{{item.slug", &mut templates).is_err());
     }
 
     #[test]
     fn a_lone_slot_keeps_its_type_and_a_mixed_one_becomes_text() {
-        let item = json!({"n": 3, "author": {"name": "Ada"}, "z": 1, "a": 2});
+        let item = json!({"n": 3, "ok": true, "author": {"name": "Ada"}, "z": 1, "a": 2});
+        assert_eq!(typed("{{item.n}}", item.clone(), 0).unwrap(), json!(3));
         assert_eq!(
-            Template::parse("{n}").unwrap().typed(&item, 0).unwrap(),
-            json!(3)
+            typed("{{ item.ok }}", item.clone(), 0).unwrap(),
+            json!(true)
         );
+        assert_eq!(typed("{{index}}", item.clone(), 4).unwrap(), json!(4));
         assert_eq!(
-            Template::parse("#{n} {author.name}")
-                .unwrap()
-                .typed(&item, 4)
-                .unwrap(),
-            json!("#3 Ada")
+            typed(
+                "#{{item.n}} {{item.author.name}}, {{index}}",
+                item.clone(),
+                4
+            )
+            .unwrap(),
+            json!("#3 Ada, 4")
         );
-        assert_eq!(
-            Template::parse("{@index}")
-                .unwrap()
-                .typed(&item, 4)
-                .unwrap(),
-            json!(4)
-        );
-        let whole = Template::parse("{@item}").unwrap().typed(&item, 0).unwrap();
+        assert_eq!(typed(" {{index}}", item.clone(), 4).unwrap(), json!(" 4"));
+        let whole = typed("{{item}}", item.clone(), 0).unwrap();
         let keys: Vec<&String> = whole.as_object().unwrap().keys().collect();
-        assert_eq!(keys, ["a", "author", "n", "z"], "item keys are sorted");
-        assert!(Template::parse("x{author}")
-            .unwrap()
-            .typed(&item, 0)
-            .is_err());
+        assert_eq!(
+            keys,
+            ["a", "author", "n", "ok", "z"],
+            "item keys are sorted"
+        );
+        assert!(typed("x{{item.author}}", item, 0).is_err());
     }
 
     #[test]
-    fn a_missing_or_null_field_is_an_error() {
-        let item = json!({"slug": null});
-        assert!(Template::parse("{slug}").unwrap().text(&item, 0).is_err());
-        assert!(Template::parse("{title}").unwrap().text(&item, 0).is_err());
+    fn a_list_element_is_selected_by_its_position() {
+        let item = json!({"tags": ["a", "b"]});
+        assert_eq!(
+            typed("{{item.tags.[1]}}", item.clone(), 0).unwrap(),
+            json!("b")
+        );
+        assert_eq!(typed("{{item.tags.1}}-x", item, 0).unwrap(), json!("b-x"));
+    }
+
+    #[test]
+    fn a_missing_or_null_field_is_an_error_naming_the_slot() {
+        let item = json!({"slug": null, "author": null});
+        for raw in ["{{item.slug}}", "x{{item.slug}}", "{{item.author.name}}"] {
+            let e = typed(raw, item.clone(), 0).unwrap_err();
+            assert!(e.contains("is null"), "{raw}: {e}");
+        }
+        for raw in ["{{item.title}}", "x{{item.title}}"] {
+            let e = typed(raw, item.clone(), 0).unwrap_err();
+            assert!(e.starts_with("{{item.title}}: no item.title"), "{raw}: {e}");
+        }
+        // Strict mode still catches what is not a plain path.
+        assert!(typed(
+            "{{#if item.slug}}{{item.nope}}{{/if}}x",
+            json!({"slug": 1}),
+            0
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn a_backslash_writes_literal_braces() {
+        assert_eq!(
+            typed(r"\{{item.slug}} {{item.slug}}", json!({"slug": "a"}), 0).unwrap(),
+            json!("{{item.slug}} a")
+        );
     }
 
     #[test]
