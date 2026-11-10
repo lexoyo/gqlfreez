@@ -624,9 +624,8 @@ fn collection_does_not_rewrite_pages_when_the_list_is_reordered() {
 fn collection_slug_collision_writes_nothing() {
     let dir = site("collection-collision", article_collection());
     let stub = start(Behaviour::Data(posts(&["hello", "Hello"])));
-    let out = gqlfreez(&dir, &stub.endpoint(), &[]);
-    assert_eq!(out.status.code(), Some(1));
-    let err = String::from_utf8_lossy(&out.stderr);
+    let (status, err) = code(&gqlfreez(&dir, &stub.endpoint(), &[]));
+    assert_eq!(status, Some(1));
     assert!(err.contains("items 0 and 1 both give the file"), "{err}");
     assert_eq!(pages(&dir), ["_index.md"]);
     assert!(!dir.join("data/wp/article.json").exists(), "all or nothing");
@@ -637,9 +636,9 @@ fn collection_never_overwrites_a_hand_written_file() {
     let dir = site("collection-handwritten", article_collection());
     write(&dir, "content/article/hello.md", "mine\n");
     let stub = start(Behaviour::Data(posts(&["hello", "world"])));
-    let out = gqlfreez(&dir, &stub.endpoint(), &[]);
-    assert_eq!(out.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("was not generated from this query"));
+    let (status, err) = code(&gqlfreez(&dir, &stub.endpoint(), &[]));
+    assert_eq!(status, Some(1));
+    assert!(err.contains("was not generated from this query"));
     assert_eq!(read(&dir, "content/article/hello.md"), "mine\n");
     assert!(!dir.join("content/article/world.md").exists());
 }
@@ -650,9 +649,8 @@ fn collection_missing_field_names_the_item() {
     collection["frontMatter"]["path"] = json!("/blog/{{item.author.handle}}/");
     let dir = site("collection-missing", collection);
     let stub = start(Behaviour::Data(posts(&["hello"])));
-    let out = gqlfreez(&dir, &stub.endpoint(), &[]);
-    assert_eq!(out.status.code(), Some(1));
-    let err = String::from_utf8_lossy(&out.stderr);
+    let (status, err) = code(&gqlfreez(&dir, &stub.endpoint(), &[]));
+    assert_eq!(status, Some(1));
     assert!(
         err.contains("item 0: {{item.author.handle}}: no item.author.handle"),
         "{err}"
@@ -666,9 +664,9 @@ fn collection_cannot_write_outside_the_root() {
     collection["dir"] = json!("../../../elsewhere");
     let dir = site("collection-outside", collection);
     let stub = start(Behaviour::Data(posts(&["hello"])));
-    let out = gqlfreez(&dir, &stub.endpoint(), &[]);
-    assert_eq!(out.status.code(), Some(2), "a configuration problem");
-    assert!(String::from_utf8_lossy(&out.stderr).contains("outside"));
+    let (status, err) = code(&gqlfreez(&dir, &stub.endpoint(), &[]));
+    assert_eq!(status, Some(2), "a configuration problem");
+    assert!(err.contains("outside"));
     assert_eq!(
         stub.calls.load(Ordering::SeqCst),
         0,
@@ -683,9 +681,9 @@ fn a_collection_with_an_unknown_key_is_refused_before_any_request() {
     collection.as_object_mut().unwrap().remove("frontMatter");
     let dir = site("collection-typo", collection);
     let stub = start(Behaviour::Data(posts(&["hello"])));
-    let out = gqlfreez(&dir, &stub.endpoint(), &[]);
-    assert_eq!(out.status.code(), Some(2), "a configuration problem");
-    assert!(String::from_utf8_lossy(&out.stderr).contains("frontmatter"));
+    let (status, err) = code(&gqlfreez(&dir, &stub.endpoint(), &[]));
+    assert_eq!(status, Some(2), "a configuration problem");
+    assert!(err.contains("frontmatter"));
     assert_eq!(stub.calls.load(Ordering::SeqCst), 0);
 }
 
@@ -694,9 +692,8 @@ fn an_unreadable_config_is_a_configuration_problem() {
     let dir = site("collection-unreadable", article_collection());
     std::fs::write(dir.join("data/wp/.graphqlrc.json"), b"\xff\xfe").unwrap();
     let stub = start(Behaviour::Data(posts(&["hello"])));
-    let out = gqlfreez(&dir, &stub.endpoint(), &[]);
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(2), "{err}");
+    let (status, err) = code(&gqlfreez(&dir, &stub.endpoint(), &[]));
+    assert_eq!(status, Some(2), "{err}");
     assert!(err.contains(".graphqlrc.json: cannot be read"), "{err}");
     assert_eq!(stub.calls.load(Ordering::SeqCst), 0);
 }
@@ -708,10 +705,9 @@ fn collection_check_and_dry_run_count_pages_without_writing() {
     ok(&gqlfreez(&dir, &stub.endpoint(), &[]));
     std::fs::remove_file(dir.join("content/article/world.md")).unwrap();
 
-    for (flag, code) in [("--check", 3), ("--dry-run", 0)] {
-        let out = gqlfreez(&dir, &stub.endpoint(), &[flag]);
-        let err = String::from_utf8_lossy(&out.stderr);
-        assert_eq!(out.status.code(), Some(code), "{flag}: {err}");
+    for (flag, want) in [("--check", 3), ("--dry-run", 0)] {
+        let (status, err) = code(&gqlfreez(&dir, &stub.endpoint(), &[flag]));
+        assert_eq!(status, Some(want), "{flag}: {err}");
         assert!(
             err.contains("1 page(s) would be written, 0 would be removed"),
             "{flag}: {err}"
@@ -737,9 +733,9 @@ fn collection_two_queries_writing_the_same_page_write_nothing() {
         ),
     );
     let stub = start(Behaviour::Data(posts(&["hello"])));
-    let out = gqlfreez(&dir, &stub.endpoint(), &[]);
-    assert_eq!(out.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("written by two queries"));
+    let (status, err) = code(&gqlfreez(&dir, &stub.endpoint(), &[]));
+    assert_eq!(status, Some(1));
+    assert!(err.contains("written by two queries"));
     assert_eq!(pages(&dir), ["_index.md"]);
 }
 
@@ -751,9 +747,8 @@ fn collection_of_a_null_list_writes_and_removes_nothing() {
     let before = read(&dir, "data/wp/article.json");
 
     let stub = start(Behaviour::Data(json!({"posts": {"nodes": null}})));
-    let out = gqlfreez(&dir, &stub.endpoint(), &[]);
-    assert_eq!(out.status.code(), Some(1));
-    let err = String::from_utf8_lossy(&out.stderr);
+    let (status, err) = code(&gqlfreez(&dir, &stub.endpoint(), &[]));
+    assert_eq!(status, Some(1));
     assert!(
         err.contains("posts.nodes is null") && err.contains("article.graphql"),
         "{err}"
@@ -1158,9 +1153,8 @@ fn a_query_with_no_endpoint_is_named_before_any_request() {
         "{ posts(first: 1) { nodes { title } } }",
     );
 
-    let out = gqlfreez_from_configs(&dir, &[]);
-    assert_eq!(out.status.code(), Some(2));
-    let err = String::from_utf8_lossy(&out.stderr);
+    let (status, err) = code(&gqlfreez_from_configs(&dir, &[]));
+    assert_eq!(status, Some(2));
     assert!(
         err.contains("orphan/q.graphql") && err.contains("no GraphQL endpoint"),
         "{err}"
