@@ -24,7 +24,7 @@ pub enum Error {
 
     /// A collection that cannot be applied: its own settings, or the result it reads.
     #[error("{path}: {message}")]
-    Split { path: PathBuf, message: String },
+    Collection { path: PathBuf, message: String },
 
     #[error("config: {0}")]
     Config(String),

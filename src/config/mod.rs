@@ -74,13 +74,13 @@ pub struct Extensions {
     pub endpoints: BTreeMap<String, Endpoint>,
     /// One entry per query, keyed by its path relative to the config file's folder.
     #[serde(default)]
-    pub collections: BTreeMap<String, Collection>,
+    pub collections: BTreeMap<String, CollectionConfig>,
 }
 
 /// One file per item of a list in the result of a query.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct Collection {
+pub struct CollectionConfig {
     pub list: String,
     pub dir: String,
     pub file: String,
@@ -115,7 +115,7 @@ pub struct Resolved {
     pub headers: Vec<(String, String)>,
     pub documents: Option<String>,
     pub origin: Option<PathBuf>,
-    pub collections: BTreeMap<String, Collection>,
+    pub collections: BTreeMap<String, CollectionConfig>,
 }
 
 /// Find and read a config file, starting at `from` and walking up to the filesystem root.

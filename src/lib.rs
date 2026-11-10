@@ -9,13 +9,13 @@ pub mod errors;
 pub mod logger;
 pub mod options;
 
+mod collection;
 mod discover;
 mod endpoint;
 mod fetch;
 mod output;
 mod paginate;
 mod query;
-mod split;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -23,10 +23,10 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+pub use collection::Report as CollectionReport;
 pub use errors::Error;
 pub use logger::{Level, Logger};
 pub use options::Options;
-pub use split::Report as SplitReport;
 
 /// Outcome for one `.graphql` file, successful or not.
 #[derive(Debug)]
@@ -39,7 +39,7 @@ pub struct FileResult {
     pub output: PathBuf,
     pub outcome: Outcome,
     /// Pages written from the query's collection, when it has one.
-    pub split: Option<SplitReport>,
+    pub collection: Option<CollectionReport>,
 }
 
 #[derive(Debug)]
@@ -70,7 +70,7 @@ impl FileResult {
 /// Results come back in discovery order. The engine never aborts on its own — inspect
 /// `Outcome::Failed` on each result.
 ///
-/// Pages split from a result are only ever written, or removed, under `options.root`.
+/// The pages of a collection are only ever written, or removed, under `options.root`.
 pub async fn run(options: &Options) -> Result<Vec<FileResult>, Error> {
     options.validate()?;
 
@@ -87,12 +87,12 @@ pub async fn run(options: &Options) -> Result<Vec<FileResult>, Error> {
     }
     // Configs are read before any request: a typo in one must not cost a full fetch.
     let configs = endpoint::configs(&queries, &root)?;
-    let splits = split::resolve(&queries, &configs, &root)?;
+    let collections = collection::resolve(&queries, &configs, &root)?;
     let targets = endpoint::resolve(&queries, &configs, options, &root)?;
     if !options.check && !options.dry_run {
         output::sweep_temporaries(&queries.iter().map(|q| q.output.clone()).collect::<Vec<_>>());
-        for split in splits.iter().flatten() {
-            split.sweep_temporaries();
+        for collection in collections.iter().flatten() {
+            collection.sweep_temporaries();
         }
     }
 
@@ -107,8 +107,8 @@ pub async fn run(options: &Options) -> Result<Vec<FileResult>, Error> {
     let stop = Arc::new(AtomicBool::new(false));
 
     let mut tasks = tokio::task::JoinSet::new();
-    let jobs = queries.iter().cloned().zip(targets).zip(splits);
-    for (index, ((q, target), split)) in jobs.enumerate() {
+    let jobs = queries.iter().cloned().zip(targets).zip(collections);
+    for (index, ((q, target), collection)) in jobs.enumerate() {
         let permit = semaphore.clone();
         let client = client.clone();
         let options = options.clone();
@@ -119,7 +119,7 @@ pub async fn run(options: &Options) -> Result<Vec<FileResult>, Error> {
             if stop.load(Ordering::Relaxed) {
                 return None;
             }
-            let (outcome, plan) = one(&client, &options, &target, &q, split.as_deref()).await;
+            let (outcome, plan) = one(&client, &options, &target, &q, collection.as_deref()).await;
             if matches!(outcome, Outcome::Failed(_)) {
                 stop.store(true, Ordering::Relaxed);
             }
@@ -128,7 +128,7 @@ pub async fn run(options: &Options) -> Result<Vec<FileResult>, Error> {
                     index,
                     source: q.source,
                     output: q.output,
-                    split: plan.as_ref().map(split::Plan::report),
+                    collection: plan.as_ref().map(collection::Plan::report),
                     outcome,
                 },
                 plan,
@@ -148,7 +148,7 @@ pub async fn run(options: &Options) -> Result<Vec<FileResult>, Error> {
     }
     // Discovery order, so the reported failure is the same on every run.
     results.sort_by_key(|(r, _)| r.index);
-    let (mut results, plans): (Vec<FileResult>, Vec<Option<split::Plan>>) =
+    let (mut results, plans): (Vec<FileResult>, Vec<Option<collection::Plan>>) =
         results.into_iter().unzip();
 
     commit(&mut results, &plans, options);
@@ -163,30 +163,31 @@ async fn one(
     options: &Options,
     target: &endpoint::Target,
     q: &discover::Query,
-    split: Option<&split::Split>,
-) -> (Outcome, Option<split::Plan>) {
-    let (data, outcome) = match (fetch(client, options, target, q).await, split) {
+    collection: Option<&collection::Collection>,
+) -> (Outcome, Option<collection::Plan>) {
+    let (data, outcome) = match (fetch(client, options, target, q).await, collection) {
         (Fetched::Data(data, outcome), _) => (data, outcome),
-        (Fetched::Done(Outcome::Skipped { reason }), Some(split)) => {
-            let error = split.error(format!("no list to read, the query is skipped ({reason})"));
+        (Fetched::Done(Outcome::Skipped { reason }), Some(collection)) => {
+            let error =
+                collection.error(format!("no list to read, the query is skipped ({reason})"));
             return (Outcome::Failed(error), None);
         }
         (Fetched::Done(outcome), _) => return (outcome, None),
     };
-    let Some(split) = split else {
+    let Some(collection) = collection else {
         return (outcome, None);
     };
-    match split.plan(&data, &options.logger) {
+    match collection.plan(&data, &options.logger) {
         Ok(plan) => (outcome, Some(plan)),
         Err(e) => (Outcome::Failed(e), None),
     }
 }
 
 enum Fetched {
-    /// The query ran. The result is the one before `--envelope`, which is what a split
+    /// The query ran. The result is the one before `--envelope`, which is what a collection
     /// reads, so that its `list` keeps one meaning whatever the flags.
     Data(Value, Outcome),
-    /// Skipped or failed: nothing to split.
+    /// Skipped or failed: no list to read.
     Done(Outcome),
 }
 
@@ -266,17 +267,17 @@ async fn fetch(
     Fetched::Data(data, outcome)
 }
 
-/// Move every staged file into place, then write the split pages. Nothing is written before
-/// this point, so a failure in the fetch phase leaves the tree untouched.
-fn commit(results: &mut [FileResult], plans: &[Option<split::Plan>], options: &Options) {
-    let with_plans: Vec<(usize, &split::Plan)> = plans
+/// Move every staged file into place, then write the pages of the collections. Nothing is
+/// written before this point, so a failure in the fetch phase leaves the tree untouched.
+fn commit(results: &mut [FileResult], plans: &[Option<collection::Plan>], options: &Options) {
+    let with_plans: Vec<(usize, &collection::Plan)> = plans
         .iter()
         .enumerate()
         .filter_map(|(i, p)| p.as_ref().map(|p| (i, p)))
         .collect();
-    if let Some((i, message)) = split::check_overlap(&with_plans) {
+    if let Some((i, message)) = collection::check_overlap(&with_plans) {
         let path = results[i].source.clone();
-        results[i].outcome = Outcome::Failed(Error::Split { path, message });
+        results[i].outcome = Outcome::Failed(Error::Collection { path, message });
     }
 
     let failed = results.iter().any(FileResult::is_failure);
@@ -286,7 +287,7 @@ fn commit(results: &mut [FileResult], plans: &[Option<split::Plan>], options: &O
         }
         return;
     }
-    if let Err((i, e)) = split::stage(&with_plans) {
+    if let Err((i, e)) = collection::stage(&with_plans) {
         results[i].outcome = Outcome::Failed(e);
         for r in results.iter() {
             output::discard(&r.output);
@@ -300,7 +301,7 @@ fn commit(results: &mut [FileResult], plans: &[Option<split::Plan>], options: &O
             }
         }
     }
-    if let Err((i, e)) = split::finish(&with_plans) {
+    if let Err((i, e)) = collection::finish(&with_plans) {
         results[i].outcome = Outcome::Failed(e);
     }
 }

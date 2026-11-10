@@ -32,7 +32,7 @@ impl Format {
 
 /// A validated entry of `extensions.collections`.
 #[derive(Debug)]
-pub struct Split {
+pub struct Collection {
     config: PathBuf,
     key: String,
     query: PathBuf,
@@ -83,16 +83,16 @@ pub fn resolve(
     queries: &[Query],
     configs: &[Arc<Resolved>],
     root: &Path,
-) -> Result<Vec<Option<Arc<Split>>>, Error> {
+) -> Result<Vec<Option<Arc<Collection>>>, Error> {
     let mut by_config: HashMap<PathBuf, HashMap<PathBuf, String>> = HashMap::new();
-    let mut splits = vec![];
+    let mut collections = vec![];
     for (q, config) in queries.iter().zip(configs) {
         let Some(origin) = config
             .origin
             .as_ref()
             .filter(|_| !config.collections.is_empty())
         else {
-            splits.push(None);
+            collections.push(None);
             continue;
         };
         let keys = match by_config.get(origin) {
@@ -106,7 +106,7 @@ pub fn resolve(
             path: q.source.clone(),
             source,
         })?;
-        splits.push(match keys.get(&source) {
+        collections.push(match keys.get(&source) {
             Some(key) => Some(Arc::new(load(
                 origin,
                 key,
@@ -117,7 +117,7 @@ pub fn resolve(
             None => None,
         });
     }
-    Ok(splits)
+    Ok(collections)
 }
 
 /// Every key, by the canonical path of the query it names. A key must name a query file
@@ -165,11 +165,11 @@ fn keys_of(origin: &Path, config: &Resolved) -> Result<HashMap<PathBuf, String>,
 fn load(
     origin: &Path,
     key: &str,
-    raw: &config::Collection,
+    raw: &config::CollectionConfig,
     query: &Query,
     root: &Path,
-) -> Result<Split, Error> {
-    let fail = |message: String| Error::Split {
+) -> Result<Collection, Error> {
+    let fail = |message: String| Error::Collection {
         path: origin.to_owned(),
         message: format!("collection {key}: {message}"),
     };
@@ -205,7 +205,7 @@ fn load(
     })?;
     let owner = relative(&dir, &canonical);
 
-    Ok(Split {
+    Ok(Collection {
         config: origin.to_owned(),
         key: key.to_owned(),
         query: query.source.clone(),
@@ -558,7 +558,7 @@ fn check_file_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-impl Split {
+impl Collection {
     fn render(&self, item: &Value, index: usize) -> Result<(String, String), String> {
         let context = Context::from(json!({ "item": item, "index": index }));
         let name = self.file.text(&self.templates, &context)?;
@@ -579,7 +579,7 @@ impl Split {
         ))
     }
 
-    /// Compute every file of this split, and what to remove. Reads the target directory,
+    /// Compute every file of this collection, and what to remove. Reads the target directory,
     /// writes nothing.
     pub fn plan(&self, data: &Value, logger: &Logger) -> Result<Plan, Error> {
         let fail = |message: String| self.error(message);
@@ -686,7 +686,7 @@ impl Split {
     }
 
     pub fn error(&self, message: String) -> Error {
-        Error::Split {
+        Error::Collection {
             path: self.config.clone(),
             message: format!("collection {}: {message}", self.key),
         }

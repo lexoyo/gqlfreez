@@ -134,9 +134,11 @@ async fn main() -> ExitCode {
         Err(e) => {
             eprintln!("gqlfreez: {e}");
             return ExitCode::from(match e {
-                // A `Split` error returned here comes from loading a collection, before
-                // any request; one found while splitting a result is a failed file instead.
-                Error::Config(_) | Error::NoQueries { .. } | Error::Split { .. } => exit::CONFIG,
+                // A `Collection` error returned here comes from loading a collection, before
+                // any request; one found while reading a result is a failed file instead.
+                Error::Config(_) | Error::NoQueries { .. } | Error::Collection { .. } => {
+                    exit::CONFIG
+                }
                 _ => exit::FAILED,
             });
         }
@@ -154,10 +156,10 @@ async fn main() -> ExitCode {
     let mut unchanged = 0;
     let mut would = 0;
     let mut skipped = 0;
-    let mut split: Option<gqlfreez::SplitReport> = None;
+    let mut collected: Option<gqlfreez::CollectionReport> = None;
     for r in &results {
-        if let Some(report) = r.split {
-            let total = split.get_or_insert_with(Default::default);
+        if let Some(report) = r.collection {
+            let total = collected.get_or_insert_with(Default::default);
             total.written += report.written;
             total.unchanged += report.unchanged;
             total.removed += report.removed;
@@ -188,7 +190,7 @@ async fn main() -> ExitCode {
     if skipped > 0 {
         summary.push_str(&format!(", {skipped} skipped"));
     }
-    if let Some(s) = split {
+    if let Some(s) = collected {
         summary.push_str(&if cli.check || cli.dry_run {
             format!(
                 ", {} page(s) would be written, {} would be removed",
@@ -204,7 +206,7 @@ async fn main() -> ExitCode {
         elapsed.subsec_millis()
     ));
 
-    let pages = split.map_or(0, |s| s.written + s.removed);
+    let pages = collected.map_or(0, |s| s.written + s.removed);
     if cli.check && (would > 0 || pages > 0) {
         eprintln!(
             "gqlfreez: {} file(s) are out of date — run gqlfreez to refresh them",

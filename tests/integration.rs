@@ -500,8 +500,8 @@ fn pages(dir: &Path) -> Vec<String> {
 }
 
 #[test]
-fn split_writes_one_page_per_item() {
-    let dir = site("split-basic", article_collection());
+fn collection_writes_one_page_per_item() {
+    let dir = site("collection-basic", article_collection());
     let stub = start(Behaviour::Data(posts(&["hello", "world"])));
     let err = ok(&gqlfreez(&dir, &stub.endpoint(), &[]));
     assert!(err.contains("2 page(s) written, 0 removed"), "{err}");
@@ -522,13 +522,13 @@ fn split_writes_one_page_per_item() {
          name = \"Ada\"\n\
          +++\n"
     );
-    // The frozen JSON is still written, untouched by the split.
+    // The frozen JSON is still written, untouched by the collection.
     assert!(read_json(&dir, "data/wp/article.json")["posts"]["nodes"][0]["tags"][1].is_null());
 }
 
 #[test]
-fn split_in_yaml_drops_nulls_too() {
-    let dir = scratch("split-yaml");
+fn collection_in_yaml_drops_nulls_too() {
+    let dir = scratch("collection-yaml");
     put(&dir, "data/wp/article.graphql", ARTICLE_QUERY);
     put(
         &dir,
@@ -583,8 +583,8 @@ fn a_lone_slot_keeps_its_type_and_text_mixes_slots() {
 }
 
 #[test]
-fn split_keeps_hand_written_files_and_removes_its_own() {
-    let dir = site("split-keep", article_collection());
+fn collection_keeps_hand_written_files_and_removes_its_own() {
+    let dir = site("collection-keep", article_collection());
     put(
         &dir,
         "content/article/notes.md",
@@ -604,8 +604,8 @@ fn split_keeps_hand_written_files_and_removes_its_own() {
 }
 
 #[test]
-fn split_of_an_empty_list_removes_its_pages_only() {
-    let dir = site("split-empty", article_collection());
+fn collection_of_an_empty_list_removes_its_pages_only() {
+    let dir = site("collection-empty", article_collection());
     let stub = start(Behaviour::Data(posts(&["hello", "world"])));
     ok(&gqlfreez(&dir, &stub.endpoint(), &[]));
     let stub = start(Behaviour::Data(posts(&[])));
@@ -615,8 +615,8 @@ fn split_of_an_empty_list_removes_its_pages_only() {
 }
 
 #[test]
-fn split_does_not_rewrite_pages_when_the_list_is_reordered() {
-    let dir = site("split-reorder", article_collection());
+fn collection_does_not_rewrite_pages_when_the_list_is_reordered() {
+    let dir = site("collection-reorder", article_collection());
     let stub = start(Behaviour::Data(posts(&["hello", "world"])));
     ok(&gqlfreez(&dir, &stub.endpoint(), &[]));
     let mtime = |name: &str| {
@@ -635,8 +635,8 @@ fn split_does_not_rewrite_pages_when_the_list_is_reordered() {
 }
 
 #[test]
-fn split_slug_collision_writes_nothing() {
-    let dir = site("split-collision", article_collection());
+fn collection_slug_collision_writes_nothing() {
+    let dir = site("collection-collision", article_collection());
     let stub = start(Behaviour::Data(posts(&["hello", "Hello"])));
     let out = gqlfreez(&dir, &stub.endpoint(), &[]);
     assert_eq!(out.status.code(), Some(1));
@@ -647,8 +647,8 @@ fn split_slug_collision_writes_nothing() {
 }
 
 #[test]
-fn split_never_overwrites_a_hand_written_file() {
-    let dir = site("split-handwritten", article_collection());
+fn collection_never_overwrites_a_hand_written_file() {
+    let dir = site("collection-handwritten", article_collection());
     put(&dir, "content/article/hello.md", "mine\n");
     let stub = start(Behaviour::Data(posts(&["hello", "world"])));
     let out = gqlfreez(&dir, &stub.endpoint(), &[]);
@@ -659,10 +659,10 @@ fn split_never_overwrites_a_hand_written_file() {
 }
 
 #[test]
-fn split_missing_field_names_the_item() {
+fn collection_missing_field_names_the_item() {
     let mut collection = article_collection();
     collection["frontMatter"]["path"] = json!("/blog/{{item.author.handle}}/");
-    let dir = site("split-missing", collection);
+    let dir = site("collection-missing", collection);
     let stub = start(Behaviour::Data(posts(&["hello"])));
     let out = gqlfreez(&dir, &stub.endpoint(), &[]);
     assert_eq!(out.status.code(), Some(1));
@@ -675,10 +675,10 @@ fn split_missing_field_names_the_item() {
 }
 
 #[test]
-fn split_cannot_write_outside_the_root() {
+fn collection_cannot_write_outside_the_root() {
     let mut collection = article_collection();
     collection["dir"] = json!("../../../elsewhere");
-    let dir = site("split-outside", collection);
+    let dir = site("collection-outside", collection);
     let stub = start(Behaviour::Data(posts(&["hello"])));
     let out = gqlfreez(&dir, &stub.endpoint(), &[]);
     assert_eq!(out.status.code(), Some(2), "a configuration problem");
@@ -695,7 +695,7 @@ fn a_collection_with_an_unknown_key_is_refused_before_any_request() {
     let mut collection = article_collection();
     collection["frontmatter"] = collection["frontMatter"].take();
     collection.as_object_mut().unwrap().remove("frontMatter");
-    let dir = site("split-typo", collection);
+    let dir = site("collection-typo", collection);
     let stub = start(Behaviour::Data(posts(&["hello"])));
     let out = gqlfreez(&dir, &stub.endpoint(), &[]);
     assert_eq!(out.status.code(), Some(2), "a configuration problem");
@@ -705,7 +705,7 @@ fn a_collection_with_an_unknown_key_is_refused_before_any_request() {
 
 #[test]
 fn an_unreadable_config_is_a_configuration_problem() {
-    let dir = site("split-unreadable", article_collection());
+    let dir = site("collection-unreadable", article_collection());
     std::fs::write(dir.join("data/wp/.graphqlrc.json"), b"\xff\xfe").unwrap();
     let stub = start(Behaviour::Data(posts(&["hello"])));
     let out = gqlfreez(&dir, &stub.endpoint(), &[]);
@@ -716,8 +716,8 @@ fn an_unreadable_config_is_a_configuration_problem() {
 }
 
 #[test]
-fn split_check_and_dry_run_count_pages_without_writing() {
-    let dir = site("split-check", article_collection());
+fn collection_check_and_dry_run_count_pages_without_writing() {
+    let dir = site("collection-check", article_collection());
     let stub = start(Behaviour::Data(posts(&["hello", "world"])));
     ok(&gqlfreez(&dir, &stub.endpoint(), &[]));
     std::fs::remove_file(dir.join("content/article/world.md")).unwrap();
@@ -739,8 +739,8 @@ fn split_check_and_dry_run_count_pages_without_writing() {
 }
 
 #[test]
-fn split_takes_over_pages_of_a_renamed_query() {
-    let dir = site("split-rename", article_collection());
+fn collection_takes_over_pages_of_a_renamed_query() {
+    let dir = site("collection-rename", article_collection());
     let stub = start(Behaviour::Data(posts(&["hello"])));
     ok(&gqlfreez(&dir, &stub.endpoint(), &[]));
     std::fs::rename(
@@ -758,8 +758,8 @@ fn split_takes_over_pages_of_a_renamed_query() {
 }
 
 #[test]
-fn split_two_queries_writing_the_same_page_write_nothing() {
-    let dir = site("split-overlap", article_collection());
+fn collection_two_queries_writing_the_same_page_write_nothing() {
+    let dir = site("collection-overlap", article_collection());
     put(&dir, "data/wp/copy.graphql", ARTICLE_QUERY);
     put(
         &dir,
@@ -777,8 +777,8 @@ fn split_two_queries_writing_the_same_page_write_nothing() {
 }
 
 #[test]
-fn split_moves_a_page_from_one_query_to_another_in_one_run() {
-    let dir = scratch("split-move");
+fn collection_moves_a_page_from_one_query_to_another_in_one_run() {
+    let dir = scratch("collection-move");
     let mut collections = json!({});
     for name in ["a", "b"] {
         put(
@@ -818,8 +818,8 @@ fn split_moves_a_page_from_one_query_to_another_in_one_run() {
 }
 
 #[test]
-fn split_of_a_null_list_writes_and_removes_nothing() {
-    let dir = site("split-null-list", article_collection());
+fn collection_of_a_null_list_writes_and_removes_nothing() {
+    let dir = site("collection-null-list", article_collection());
     let stub = start(Behaviour::Data(posts(&["hello"])));
     ok(&gqlfreez(&dir, &stub.endpoint(), &[]));
     let before = read(&dir, "data/wp/article.json");
@@ -837,8 +837,8 @@ fn split_of_a_null_list_writes_and_removes_nothing() {
 }
 
 #[test]
-fn split_yaml_quotes_strings() {
-    let dir = scratch("split-yaml-quotes");
+fn collection_yaml_quotes_strings() {
+    let dir = scratch("collection-yaml-quotes");
     put(&dir, "data/countries.graphql", "{ countries { code } }");
     put(
         &dir,
@@ -865,8 +865,8 @@ fn split_yaml_quotes_strings() {
 }
 
 #[test]
-fn split_removes_temporary_pages_left_by_a_crash() {
-    let dir = site("split-stale-temp", article_collection());
+fn collection_removes_temporary_pages_left_by_a_crash() {
+    let dir = site("collection-stale-temp", article_collection());
     let stub = start(Behaviour::Data(posts(&["hello"])));
     ok(&gqlfreez(&dir, &stub.endpoint(), &[]));
     let page = read(&dir, "content/article/hello.md");
@@ -881,7 +881,7 @@ fn split_removes_temporary_pages_left_by_a_crash() {
 
 #[test]
 fn check_and_dry_run_leave_temporary_pages_alone() {
-    let dir = site("split-stale-temp-dry", article_collection());
+    let dir = site("collection-stale-temp-dry", article_collection());
     let stub = start(Behaviour::Data(posts(&["hello"])));
     ok(&gqlfreez(&dir, &stub.endpoint(), &[]));
     let page = read(&dir, "content/article/hello.md");
@@ -899,8 +899,8 @@ fn check_and_dry_run_leave_temporary_pages_alone() {
 }
 
 #[test]
-fn split_refuses_a_directory_in_place_of_a_page_before_writing() {
-    let dir = site("split-dir-in-the-way", article_collection());
+fn collection_refuses_a_directory_in_place_of_a_page_before_writing() {
+    let dir = site("collection-dir-in-the-way", article_collection());
     std::fs::create_dir_all(dir.join("content/article/world.md")).unwrap();
     let stub = start(Behaviour::Data(posts(&["hello", "world"])));
     let out = gqlfreez(&dir, &stub.endpoint(), &[]);
@@ -913,8 +913,8 @@ fn split_refuses_a_directory_in_place_of_a_page_before_writing() {
 
 #[cfg(unix)]
 #[test]
-fn split_refuses_a_symbolic_link_in_place_of_a_page_before_writing() {
-    let dir = site("split-link-in-the-way", article_collection());
+fn collection_refuses_a_symbolic_link_in_place_of_a_page_before_writing() {
+    let dir = site("collection-link-in-the-way", article_collection());
     put(&dir, "elsewhere.md", "kept\n");
     std::os::unix::fs::symlink(
         dir.join("elsewhere.md"),
