@@ -789,6 +789,25 @@ fn split_removes_temporary_pages_left_by_a_crash() {
 }
 
 #[test]
+fn check_and_dry_run_leave_temporary_pages_alone() {
+    let dir = site("split-stale-temp-dry", article_split());
+    let stub = start(Behaviour::Data(posts(&["hello"])));
+    ok(&gqlfreez(&dir, &stub.endpoint(), &[]));
+    let page = read(&dir, "content/article/hello.md");
+    put(&dir, "content/article/gone.md.gqlfreez-tmp", &page);
+
+    for flag in ["--check", "--dry-run"] {
+        let err = ok(&gqlfreez(&dir, &stub.endpoint(), &[flag]));
+        assert!(err.contains("0 would be removed"), "{flag}: {err}");
+        assert_eq!(
+            pages(&dir),
+            ["_index.md", "gone.md.gqlfreez-tmp", "hello.md"],
+            "{flag}"
+        );
+    }
+}
+
+#[test]
 fn split_refuses_a_directory_in_place_of_a_page_before_writing() {
     let dir = site("split-dir-in-the-way", article_split());
     std::fs::create_dir_all(dir.join("content/article/world.md")).unwrap();

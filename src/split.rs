@@ -657,6 +657,10 @@ impl Split {
             }
         };
         for entry in entries.flatten() {
+            // Not swept in --check and --dry-run, a temporary must not count as a page.
+            if entry.file_name().to_string_lossy().ends_with(TEMP_SUFFIX) {
+                continue;
+            }
             let Ok(kind) = entry.file_type() else {
                 continue;
             };
