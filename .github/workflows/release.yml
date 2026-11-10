@@ -99,13 +99,11 @@ jobs:
 
       - name: It freezes a real query
         run: |
-          ./bin/gqlfreez-linux-x64 ./examples/zola/data \
-            --endpoint https://countries.trevorblades.com/graphql
+          ./bin/gqlfreez-linux-x64 ./examples/zola
           test -s examples/zola/data/countries.json
           grep -q '"Andorra"' examples/zola/data/countries.json
           echo "--- second run must change nothing ---"
-          ./bin/gqlfreez-linux-x64 ./examples/zola/data \
-            --endpoint https://countries.trevorblades.com/graphql --check
+          ./bin/gqlfreez-linux-x64 ./examples/zola --check
 
   release:
     name: Publish the GitHub release
