@@ -143,9 +143,7 @@ mod tests {
 
     #[test]
     fn identical_content_is_not_rewritten() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("target/tmp")
-            .join("gqlfreez-test-write");
+        let dir = std::env::temp_dir().join("gqlfreez-test-write");
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("x.json");
         let body = render(&json!({"a": 1}));
@@ -162,9 +160,7 @@ mod tests {
 
     #[test]
     fn crlf_on_disk_does_not_force_a_rewrite() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("target/tmp")
-            .join("gqlfreez-test-crlf");
+        let dir = std::env::temp_dir().join("gqlfreez-test-crlf");
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("y.json");
         let body = render(&serde_json::json!({"a": 1}));

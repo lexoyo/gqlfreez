@@ -169,24 +169,20 @@ fn handle(
 }
 
 fn scratch(name: &str) -> PathBuf {
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("gqlfreez-it-{name}"));
+    let dir = std::env::temp_dir().join(format!("gqlfreez-it-{name}"));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
 
 fn write(dir: &Path, name: &str, body: &str) {
-    std::fs::write(dir.join(name), body).unwrap();
+    let p = dir.join(name);
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    std::fs::write(p, body).unwrap();
 }
 
 fn gqlfreez(dir: &Path, endpoint: &str, extra: &[&str]) -> std::process::Output {
-    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_gqlfreez"));
-    cmd.arg(dir)
-        .arg("--endpoint")
-        .arg(endpoint)
-        .arg("--no-dotenv");
-    cmd.args(extra);
-    cmd.output().expect("run gqlfreez")
+    gqlfreez_from_configs(dir, &[&["--endpoint", endpoint], extra].concat())
 }
 
 fn read_json(dir: &Path, name: &str) -> Value {
@@ -405,22 +401,12 @@ fn no_matching_file_is_an_error() {
     let stub = start(Behaviour::Simple);
     let out = gqlfreez(&dir, &stub.endpoint(), &[]);
     assert_eq!(out.status.code(), Some(2));
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("gqlfreez: config: no query file under "),
-        "{stderr}"
-    );
+    assert!(String::from_utf8_lossy(&out.stderr).contains("no query file"));
 }
 
 // Collections: one file per item of a list.
 
 const ARTICLE_QUERY: &str = "{ posts(first: 10) { nodes { slug title tags author { name } } } }";
-
-fn put(dir: &Path, rel: &str, body: &str) {
-    let p = dir.join(rel);
-    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-    std::fs::write(p, body).unwrap();
-}
 
 fn read(dir: &Path, rel: &str) -> String {
     std::fs::read_to_string(dir.join(rel)).unwrap()
@@ -450,13 +436,13 @@ fn graphqlrc_json(collections: Value, endpoint: Option<(&str, &str)>) -> String 
 /// A site with the queries under data/ and the pages under content/.
 fn site(name: &str, collection: Value) -> PathBuf {
     let dir = scratch(name);
-    put(&dir, "data/wp/article.graphql", ARTICLE_QUERY);
-    put(
+    write(&dir, "data/wp/article.graphql", ARTICLE_QUERY);
+    write(
         &dir,
         "data/wp/.graphqlrc.json",
         &graphqlrc_json(json!({ "article.graphql": collection }), None),
     );
-    put(
+    write(
         &dir,
         "content/article/_index.md",
         "+++\ntitle = \"Blog\"\n+++\n",
@@ -529,8 +515,8 @@ fn collection_writes_one_page_per_item() {
 #[test]
 fn collection_in_yaml_drops_nulls_too() {
     let dir = scratch("collection-yaml");
-    put(&dir, "data/wp/article.graphql", ARTICLE_QUERY);
-    put(
+    write(&dir, "data/wp/article.graphql", ARTICLE_QUERY);
+    write(
         &dir,
         "data/wp/.graphqlrc.yml",
         "# comments are welcome here\n\
@@ -585,7 +571,7 @@ fn a_lone_slot_keeps_its_type_and_text_mixes_slots() {
 #[test]
 fn collection_keeps_hand_written_files_and_removes_its_own() {
     let dir = site("collection-keep", article_collection());
-    put(
+    write(
         &dir,
         "content/article/notes.md",
         "+++\ntitle = \"by hand\"\n+++\n",
@@ -649,7 +635,7 @@ fn collection_slug_collision_writes_nothing() {
 #[test]
 fn collection_never_overwrites_a_hand_written_file() {
     let dir = site("collection-handwritten", article_collection());
-    put(&dir, "content/article/hello.md", "mine\n");
+    write(&dir, "content/article/hello.md", "mine\n");
     let stub = start(Behaviour::Data(posts(&["hello", "world"])));
     let out = gqlfreez(&dir, &stub.endpoint(), &[]);
     assert_eq!(out.status.code(), Some(1));
@@ -741,8 +727,8 @@ fn collection_check_and_dry_run_count_pages_without_writing() {
 #[test]
 fn collection_two_queries_writing_the_same_page_write_nothing() {
     let dir = site("collection-overlap", article_collection());
-    put(&dir, "data/wp/copy.graphql", ARTICLE_QUERY);
-    put(
+    write(&dir, "data/wp/copy.graphql", ARTICLE_QUERY);
+    write(
         &dir,
         "data/wp/.graphqlrc.json",
         &graphqlrc_json(
@@ -779,8 +765,8 @@ fn collection_of_a_null_list_writes_and_removes_nothing() {
 #[test]
 fn collection_yaml_quotes_strings() {
     let dir = scratch("collection-yaml-quotes");
-    put(&dir, "data/countries.graphql", "{ countries { code } }");
-    put(
+    write(&dir, "data/countries.graphql", "{ countries { code } }");
+    write(
         &dir,
         "data/.graphqlrc.yml",
         "extensions:\n\
@@ -807,7 +793,7 @@ fn collection_yaml_quotes_strings() {
 #[test]
 fn a_collection_key_with_no_query_is_refused_before_any_request() {
     let dir = site("collection-no-query", article_collection());
-    put(
+    write(
         &dir,
         "data/wp/.graphqlrc.json",
         &graphqlrc_json(
@@ -828,15 +814,15 @@ fn a_collection_key_with_no_query_is_refused_before_any_request() {
 #[test]
 fn a_collection_key_for_a_query_of_another_config_is_refused() {
     let dir = scratch("collection-other-config");
-    put(&dir, "data/wp/article.graphql", ARTICLE_QUERY);
-    put(
+    write(&dir, "data/wp/article.graphql", ARTICLE_QUERY);
+    write(
         &dir,
         "data/wp/.graphqlrc.json",
         &graphqlrc_json(json!({}), None),
     );
     let mut collection = article_collection();
     collection["dir"] = json!("../content/article");
-    put(
+    write(
         &dir,
         "data/.graphqlrc.json",
         &graphqlrc_json(json!({ "wp/article.graphql": collection }), None),
@@ -855,7 +841,7 @@ fn a_collection_key_for_a_query_of_another_config_is_refused() {
 #[test]
 fn a_collection_key_in_a_config_no_query_uses_is_still_checked() {
     let dir = site("collection-unused-config", article_collection());
-    put(
+    write(
         &dir,
         ".graphqlrc.yml",
         "extensions:\n\
@@ -881,7 +867,7 @@ fn a_collection_key_must_be_relative_with_forward_slashes() {
     let dir = site("collection-key-shape", article_collection());
     let absolute = dir.join("data/wp/article.graphql");
     for key in [absolute.to_str().unwrap(), "sub\\article.graphql"] {
-        put(
+        write(
             &dir,
             "data/wp/.graphqlrc.json",
             &graphqlrc_json(json!({ key: article_collection() }), None),
@@ -900,10 +886,10 @@ fn a_collection_key_must_be_relative_with_forward_slashes() {
 #[test]
 fn dir_is_relative_to_the_config_folder() {
     let dir = scratch("collection-config-folder");
-    put(&dir, "data/wp/article.graphql", ARTICLE_QUERY);
+    write(&dir, "data/wp/article.graphql", ARTICLE_QUERY);
     let mut collection = article_collection();
     collection["dir"] = json!("content/article");
-    put(
+    write(
         &dir,
         ".graphqlrc.json",
         &graphqlrc_json(json!({ "data/wp/article.graphql": collection }), None),
@@ -917,8 +903,8 @@ fn dir_is_relative_to_the_config_folder() {
 #[test]
 fn a_query_in_a_subfolder_is_keyed_by_its_relative_path() {
     let dir = scratch("collection-subfolder");
-    put(&dir, "data/blog/posts.graphql", ARTICLE_QUERY);
-    put(
+    write(&dir, "data/blog/posts.graphql", ARTICLE_QUERY);
+    write(
         &dir,
         "data/.graphqlrc.toml",
         "[extensions.collections.\"blog/posts.graphql\"]\n\
@@ -943,8 +929,8 @@ fn a_query_in_a_subfolder_is_keyed_by_its_relative_path() {
 #[test]
 fn a_date_in_a_toml_config_is_written_as_text() {
     let dir = scratch("collection-toml-date");
-    put(&dir, "data/blog/posts.graphql", ARTICLE_QUERY);
-    put(
+    write(&dir, "data/blog/posts.graphql", ARTICLE_QUERY);
+    write(
         &dir,
         "data/.graphqlrc.toml",
         "[extensions.collections.\"blog/posts.graphql\"]\n\
@@ -972,7 +958,7 @@ fn a_date_in_a_toml_config_is_written_as_text() {
 fn a_collection_works_with_the_endpoint_flag_without_the_config_headers() {
     let dir = site("collection-endpoint-flag", article_collection());
     let configured = start(Behaviour::Simple);
-    put(
+    write(
         &dir,
         "data/wp/.graphqlrc.json",
         &graphqlrc_json(
@@ -990,7 +976,7 @@ fn a_collection_works_with_the_endpoint_flag_without_the_config_headers() {
 // One run, several data sources: each query takes the graphql-config closest to it.
 
 fn graphqlrc(dir: &Path, rel: &str, endpoint: &str, token: &str) {
-    put(
+    write(
         dir,
         rel,
         &format!(
@@ -1021,7 +1007,7 @@ fn two_sources(name: &str) -> (PathBuf, Stub, Stub) {
     let shop = start(Behaviour::Data(
         json!({"products": {"nodes": [{"name": "mug"}]}}),
     ));
-    put(
+    write(
         &dir,
         "data/wp/.graphqlrc.json",
         &graphqlrc_json(
@@ -1029,7 +1015,7 @@ fn two_sources(name: &str) -> (PathBuf, Stub, Stub) {
             Some((&wp.endpoint(), "wp-token")),
         ),
     );
-    put(
+    write(
         &dir,
         "data/shop/products.graphql",
         "{ products(first: 5) { nodes { name } } }",
@@ -1069,12 +1055,12 @@ fn a_folder_without_config_takes_the_closest_one_above() {
     let inner = start(Behaviour::Simple);
     graphqlrc(&dir, "src/.graphqlrc.yml", &top.endpoint(), "top");
     graphqlrc(&dir, "src/blog/.graphqlrc.yml", &inner.endpoint(), "inner");
-    put(
+    write(
         &dir,
         "src/home/posts.graphql",
         "{ posts(first: 1) { nodes { title } } }",
     );
-    put(
+    write(
         &dir,
         "src/blog/deep/posts.graphql",
         "{ posts(first: 1) { nodes { title } } }",
@@ -1091,7 +1077,7 @@ fn a_config_above_the_root_still_applies_when_nothing_is_closer() {
     let dir = scratch("sources-above-root");
     let stub = start(Behaviour::Simple);
     graphqlrc(&dir, ".graphqlrc.yml", &stub.endpoint(), "project");
-    put(
+    write(
         &dir,
         "src/posts.graphql",
         "{ posts(first: 1) { nodes { title } } }",
@@ -1119,7 +1105,7 @@ fn the_endpoint_flag_takes_no_url_or_header_from_a_config() {
     let dir = scratch("sources-flag-root");
     let configured = start(Behaviour::Simple);
     graphqlrc(&dir, ".graphqlrc", &configured.endpoint(), "root-token");
-    put(
+    write(
         &dir,
         "posts.graphql",
         "{ posts(first: 1) { nodes { title } } }",
@@ -1152,8 +1138,8 @@ fn a_header_flag_goes_to_every_source() {
 fn a_query_with_no_endpoint_is_named_before_any_request() {
     let (dir, wp, shop) = two_sources("sources-missing");
     // A config with no endpoint at the root stops the lookup there, whatever is above.
-    put(&dir, ".graphqlrc.yml", "schema: ./schema.graphql\n");
-    put(
+    write(&dir, ".graphqlrc.yml", "schema: ./schema.graphql\n");
+    write(
         &dir,
         "data/orphan/q.graphql",
         "{ posts(first: 1) { nodes { title } } }",

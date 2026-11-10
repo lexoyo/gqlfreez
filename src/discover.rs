@@ -97,9 +97,7 @@ mod tests {
     use super::*;
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("target/tmp")
-            .join(format!("gqlfreez-test-{name}"));
+        let dir = std::env::temp_dir().join(format!("gqlfreez-test-{name}"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir

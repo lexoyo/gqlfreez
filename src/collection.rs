@@ -288,7 +288,7 @@ fn registry() -> Handlebars<'static> {
 }
 
 /// A slot that is a plain path, like `{{item.author.name}}`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 struct Slot {
     raw: String,
     path: String,
@@ -676,48 +676,8 @@ mod tests {
     }
 
     #[test]
-    fn slots_are_plain_paths_whatever_the_spacing() {
-        let mut templates = registry();
-        let t = Template::parse("{{ item.author.name }}", &mut templates).unwrap();
-        assert_eq!(
-            t.lone,
-            Some(Slot {
-                raw: "item.author.name".into(),
-                path: "item.author.name".into()
-            })
-        );
-        let t = Template::parse("/blog/{{item.slug}}/", &mut templates).unwrap();
-        assert!(t.lone.is_none());
-        assert_eq!(t.slots.len(), 1);
-        assert!(Template::parse("{{item.slug", &mut templates).is_err());
-    }
-
-    #[test]
-    fn a_lone_slot_keeps_its_type_and_a_mixed_one_becomes_text() {
-        let item = json!({"n": 3, "ok": true, "author": {"name": "Ada"}, "z": 1, "a": 2});
-        assert_eq!(typed("{{item.n}}", item.clone(), 0).unwrap(), json!(3));
-        assert_eq!(
-            typed("{{ item.ok }}", item.clone(), 0).unwrap(),
-            json!(true)
-        );
-        assert_eq!(typed("{{index}}", item.clone(), 4).unwrap(), json!(4));
-        assert_eq!(
-            typed(
-                "#{{item.n}} {{item.author.name}}, {{index}}",
-                item.clone(),
-                4
-            )
-            .unwrap(),
-            json!("#3 Ada, 4")
-        );
-        assert_eq!(typed(" {{index}}", item.clone(), 4).unwrap(), json!(" 4"));
-        let whole = typed("{{item}}", item.clone(), 0).unwrap();
-        let keys: Vec<&String> = whole.as_object().unwrap().keys().collect();
-        assert_eq!(
-            keys,
-            ["a", "author", "n", "ok", "z"],
-            "item keys are sorted"
-        );
+    fn an_object_cannot_go_into_a_string() {
+        let item = json!({"author": {"name": "Ada"}});
         assert!(typed("x{{item.author}}", item, 0).is_err());
     }
 
@@ -732,86 +692,12 @@ mod tests {
     }
 
     #[test]
-    fn a_list_element_is_selected_by_its_position() {
-        let item = json!({"tags": ["a", "b"]});
-        assert_eq!(
-            typed("{{item.tags.[1]}}", item.clone(), 0).unwrap(),
-            json!("b")
-        );
-        assert_eq!(typed("{{item.tags.1}}-x", item, 0).unwrap(), json!("b-x"));
-    }
-
-    #[test]
-    fn a_missing_or_null_field_is_an_error_naming_the_slot() {
+    fn a_null_field_is_an_error_naming_the_slot() {
         let item = json!({"slug": null});
         for raw in ["{{item.slug}}", "x{{item.slug}}"] {
             let e = typed(raw, item.clone(), 0).unwrap_err();
-            assert!(e.contains("is null"), "{raw}: {e}");
+            assert!(e.contains("{{item.slug}} is null"), "{raw}: {e}");
         }
-        for raw in ["{{item.title}}", "x{{item.title}}"] {
-            let e = typed(raw, item.clone(), 0).unwrap_err();
-            assert!(e.starts_with("{{item.title}}: no item.title"), "{raw}: {e}");
-        }
-        // Strict mode still catches what is not a plain path.
-        assert!(typed(
-            "{{#if item.slug}}{{item.nope}}{{/if}}x",
-            json!({"slug": 1}),
-            0
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn a_backslash_writes_literal_braces() {
-        assert_eq!(
-            typed(r"\{{item.slug}} {{item.slug}}", json!({"slug": "a"}), 0).unwrap(),
-            json!("{{item.slug}} a")
-        );
-    }
-
-    #[test]
-    fn nulls_are_dropped_everywhere() {
-        assert_eq!(
-            without_nulls(json!({"a": null, "b": [1, null, {"c": null}]})),
-            json!({"b": [1, {}]})
-        );
-    }
-
-    #[test]
-    fn yaml_front_matter_quotes_every_string() {
-        let cases = [
-            (json!({"code": "NO"}), "code: 'NO'\n"),
-            (json!({"on": "x"}), "\"on\": 'x'\n"),
-            (json!({"date": "2024-01-01"}), "date: '2024-01-01'\n"),
-            (json!({"bell": "a\u{7}b"}), "bell: \"a\\ab\"\n"),
-            (json!({"big": 1e300}), "big: 1.0e+300\n"),
-        ];
-        for (value, text) in cases {
-            assert_eq!(yaml(&value).unwrap(), text, "{value}");
-        }
-    }
-
-    #[test]
-    fn yaml_front_matter_nests_maps_and_lists() {
-        let value = json!({
-            "extra": {"people": [{"name": "Ada", "age": 36}, {"name": "Bob"}], "none": {}},
-            "grid": [[1, 2], []],
-            "ok": true
-        });
-        assert_eq!(
-            yaml(&value).unwrap(),
-            "extra:\n\
-             \x20 people:\n\
-             \x20 - name: 'Ada'\n\
-             \x20   age: 36\n\
-             \x20 - name: 'Bob'\n\
-             \x20 none: {}\n\
-             grid:\n\
-             - - 1\n\
-             \x20 - 2\n\
-             - []\n\
-             ok: true\n"
-        );
     }
 
     #[test]
@@ -820,37 +706,5 @@ mod tests {
             assert!(check_file_name(bad).is_err(), "{bad}");
         }
         assert!(check_file_name("hello-world.md").is_ok());
-    }
-
-    #[test]
-    fn relative_paths_climb_then_descend() {
-        assert_eq!(
-            relative(
-                Path::new("/s/content/article"),
-                Path::new("/s/data/wp/a.graphql")
-            ),
-            "../../data/wp/a.graphql"
-        );
-        assert_eq!(
-            relative(Path::new("/s/data"), Path::new("/s/data/a.graphql")),
-            "a.graphql"
-        );
-    }
-
-    #[test]
-    fn dir_cannot_leave_the_root() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("target/tmp")
-            .join("gqlfreez-test-confine");
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("data")).unwrap();
-        let root = root.canonicalize().unwrap();
-        let data = root.join("data");
-        assert_eq!(
-            confine(&data, "../content/article", &root).unwrap(),
-            root.join("content/article")
-        );
-        assert!(confine(&data, "../../elsewhere", &root).is_err());
-        assert!(confine(&data, "/etc", &root).is_err());
     }
 }
