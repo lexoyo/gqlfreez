@@ -63,7 +63,7 @@ pub fn resolve(
                 q.source.display()
             )));
         };
-        if !is_http(&url) {
+        if !config::is_url(&url) {
             return Err(Error::Config(format!(
                 "{}: the endpoint must be an http(s) URL, got {url:?}",
                 config.origin.as_deref().unwrap_or(&q.source).display()
@@ -81,10 +81,6 @@ pub fn resolve(
         targets.push(target(url, &config.headers, &options.headers)?);
     }
     Ok(targets)
-}
-
-pub fn is_http(url: &str) -> bool {
-    url.starts_with("http://") || url.starts_with("https://")
 }
 
 /// The config's headers first, then `--header`, which wins on a duplicate name.

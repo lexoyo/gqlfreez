@@ -58,7 +58,7 @@ impl Options {
             return Err(Error::Config("--max-pages must be at least 1".into()));
         }
         if let Some(endpoint) = &self.endpoint {
-            if !crate::endpoint::is_http(endpoint) {
+            if !crate::config::is_url(endpoint) {
                 return Err(Error::Config(format!(
                     "the endpoint must be an http(s) URL, got {endpoint:?}"
                 )));

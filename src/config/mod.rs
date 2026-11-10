@@ -305,7 +305,7 @@ fn schema_url(schema: &Schema) -> Option<(String, Vec<(String, String)>)> {
     }
 }
 
-fn is_url(s: &str) -> bool {
+pub(crate) fn is_url(s: &str) -> bool {
     s.starts_with("http://") || s.starts_with("https://")
 }
 
