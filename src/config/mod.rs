@@ -206,7 +206,11 @@ pub fn read(path: &Path) -> Result<Resolved, Error> {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
     let name = path.file_name().and_then(|e| e.to_str()).unwrap_or("");
     let cfg: GraphqlConfig = if ext == "toml" {
-        toml::from_str(&text).map_err(|e| Error::Config(format!("{}: {e}", path.display())))?
+        let fail = |e: toml::de::Error| Error::Config(format!("{}: {e}", path.display()));
+        let table: toml::Table = toml::from_str(&text).map_err(fail)?;
+        datetimes_as_strings(toml::Value::Table(table))
+            .try_into()
+            .map_err(fail)?
     } else if ext == "json" || (name == ".graphqlrc" && text.trim_start().starts_with('{')) {
         serde_json::from_str(&text)
             .map_err(|e| Error::Config(format!("{}: {e}", path.display())))?
@@ -217,6 +221,23 @@ pub fn read(path: &Path) -> Result<Resolved, Error> {
 
     let cfg = flatten_projects(cfg, path)?;
     Ok(resolve(cfg, path))
+}
+
+/// A TOML date reaches serde as a private table, which would end up as is in a front matter.
+fn datetimes_as_strings(value: toml::Value) -> toml::Value {
+    match value {
+        toml::Value::Datetime(d) => toml::Value::String(d.to_string()),
+        toml::Value::Array(items) => {
+            toml::Value::Array(items.into_iter().map(datetimes_as_strings).collect())
+        }
+        toml::Value::Table(table) => toml::Value::Table(
+            table
+                .into_iter()
+                .map(|(k, v)| (k, datetimes_as_strings(v)))
+                .collect(),
+        ),
+        other => other,
+    }
 }
 
 /// A single project (or one named `default`) is accepted; several are not.
