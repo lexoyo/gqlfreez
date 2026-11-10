@@ -680,6 +680,12 @@ impl Collection {
         let produced: HashSet<String> = pages.iter().map(|(n, _)| n.to_lowercase()).collect();
         let mut plan = Plan::default();
         let mut unclaimed = 0;
+        let mut claims: HashMap<String, bool> = HashMap::new();
+        let mut is_claimed = |owner: &String| {
+            *claims
+                .entry(owner.clone())
+                .or_insert_with(|| self.is_claimed(owner))
+        };
 
         for entry in existing.values() {
             let (Some(owner), false) =
@@ -689,7 +695,7 @@ impl Collection {
             };
             if *owner == self.owner {
                 plan.removals.push(entry.path.clone());
-            } else if !self.is_claimed(owner) {
+            } else if !is_claimed(owner) {
                 unclaimed += 1;
             }
         }
@@ -711,7 +717,7 @@ impl Collection {
                             entry.path.display()
                         )))
                     }
-                    Some(owner) if *owner != self.owner && self.is_claimed(owner) => {
+                    Some(owner) if *owner != self.owner && is_claimed(owner) => {
                         plan.takeovers.push((entry.path.clone(), owner.clone()));
                     }
                     _ => {}
