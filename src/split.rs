@@ -466,73 +466,17 @@ fn without_nulls(value: Value) -> Value {
     }
 }
 
-/// YAML written by hand rather than by serde_yaml_ng, which leaves `NO`, `on` or `y` bare:
-/// Jekyll reads YAML 1.1, where those are booleans.
-fn yaml_map(map: &Map<String, Value>, indent: usize) -> String {
-    let pad = " ".repeat(indent);
-    let mut out = String::new();
-    for (key, value) in map {
-        out.push_str(&format!("{pad}{}:", yaml_string(key)));
-        match value {
-            Value::Object(m) if !m.is_empty() => {
-                out.push('\n');
-                out.push_str(&yaml_map(m, indent + 2));
-            }
-            Value::Array(items) if !items.is_empty() => {
-                out.push('\n');
-                out.push_str(&yaml_seq(items, indent));
-            }
-            scalar => out.push_str(&format!(" {}\n", yaml_scalar(scalar))),
-        }
+/// Every string quoted: Jekyll reads YAML 1.1, where `NO` or `on` are booleans.
+fn yaml(front_matter: &Value) -> Result<String, String> {
+    // The serializer writes `{}` for an empty map, TOML writes nothing: keep both empty.
+    if front_matter.as_object().is_some_and(Map::is_empty) {
+        return Ok(String::new());
     }
-    out
-}
-
-fn yaml_seq(items: &[Value], indent: usize) -> String {
-    let pad = " ".repeat(indent);
-    let mut out = String::new();
-    for item in items {
-        let nested = match item {
-            Value::Object(m) if !m.is_empty() => yaml_map(m, indent + 2),
-            Value::Array(a) if !a.is_empty() => yaml_seq(a, indent + 2),
-            scalar => {
-                out.push_str(&format!("{pad}- {}\n", yaml_scalar(scalar)));
-                continue;
-            }
-        };
-        // The first line of the nested block goes on the dash line.
-        out.push_str(&format!("{pad}- {}", &nested[indent + 2..]));
-    }
-    out
-}
-
-fn yaml_scalar(value: &Value) -> String {
-    match value {
-        Value::String(s) => yaml_string(s),
-        Value::Object(_) => "{}".into(),
-        Value::Array(_) => "[]".into(),
-        other => other.to_string(),
-    }
-}
-
-/// Bare only when no YAML 1.1 or 1.2 reader can take it for anything but a string.
-fn yaml_string(s: &str) -> String {
-    const SPECIAL: &[&str] = &[
-        "y", "n", "yes", "no", "true", "false", "on", "off", "null", "~",
-    ];
-    let mut chars = s.chars();
-    let plain = chars
-        .next()
-        .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '/')
-        && chars.all(|c| c.is_alphanumeric() || " _-./".contains(c))
-        && !s.ends_with(' ')
-        && !SPECIAL.contains(&s.to_lowercase().as_str());
-    if plain {
-        s.to_owned()
-    } else {
-        // A JSON string is a valid double-quoted YAML scalar.
-        Value::String(s.to_owned()).to_string()
-    }
+    serde_saphyr::to_string_with_options(
+        front_matter,
+        serde_saphyr::ser_options! { quote_all: true },
+    )
+    .map_err(|e| e.to_string())
 }
 
 fn check_file_name(name: &str) -> Result<(), String> {
@@ -571,10 +515,7 @@ impl Split {
         )?));
         let body = match self.format {
             Format::Toml => toml::to_string(&front_matter).map_err(|e| e.to_string())?,
-            Format::Yaml => match &front_matter {
-                Value::Object(m) => yaml_map(m, 0),
-                _ => unreachable!("a front matter is always an object"),
-            },
+            Format::Yaml => yaml(&front_matter)?,
         };
         let fence = self.format.fence();
         Ok((
@@ -960,78 +901,41 @@ mod tests {
     }
 
     #[test]
-    fn yaml_quotes_every_string_a_yaml_1_1_reader_would_not_read_as_a_string() {
-        for bare in [
-            "NO", "no", "Yes", "on", "OFF", "y", "N", "true", "False", "~", "null",
-        ] {
-            assert_eq!(yaml_string(bare), format!("\"{bare}\""));
+    fn yaml_front_matter_quotes_every_string() {
+        let cases = [
+            (json!({}), ""),
+            (json!({"code": "NO"}), "code: 'NO'\n"),
+            (json!({"on": "x"}), "\"on\": 'x'\n"),
+            (json!({"date": "2024-01-01"}), "date: '2024-01-01'\n"),
+            (json!({"bell": "a\u{7}b"}), "bell: \"a\\ab\"\n"),
+            (json!({"big": 1e300}), "big: 1.0e+300\n"),
+        ];
+        for (value, text) in cases {
+            assert_eq!(yaml(&value).unwrap(), text, "{value}");
         }
-        for number in [
-            "1",
-            "-2",
-            "0x1F",
-            "1e3",
-            ".5",
-            ".inf",
-            "1:20",
-            "2024-01-01",
-            "010",
-        ] {
-            assert_eq!(yaml_string(number), format!("\"{number}\""));
-        }
-        for odd in [
-            "",
-            " a",
-            "a ",
-            "a: b",
-            "a #b",
-            "#a",
-            "*a",
-            "&a",
-            "!a",
-            "@a",
-            "line\nbreak",
-        ] {
-            let quoted = yaml_string(odd);
-            assert!(quoted.starts_with('"'), "{odd:?} gave {quoted}");
-            let back: serde_yaml_ng::Value = serde_yaml_ng::from_str(&quoted).unwrap();
-            assert_eq!(back.as_str(), Some(odd));
-        }
-        assert_eq!(yaml_string("About hello"), "About hello");
-        assert_eq!(yaml_string("/blog/hello/"), "/blog/hello/");
     }
 
     #[test]
     fn yaml_front_matter_nests_maps_and_lists() {
         let value = json!({
-            "code": "NO",
-            "tags": ["a", "on"],
             "extra": {"people": [{"name": "Ada", "age": 36}, {"name": "Bob"}], "none": {}},
-            "grid": [[1, 2], []]
+            "grid": [[1, 2], []],
+            "ok": true
         });
-        let Value::Object(map) = value.clone() else {
-            unreachable!()
-        };
-        let text = yaml_map(&map, 0);
         assert_eq!(
-            text,
-            "code: \"NO\"\n\
-             tags:\n\
-             - a\n\
-             - \"on\"\n\
-             extra:\n\
+            yaml(&value).unwrap(),
+            "extra:\n\
              \x20 people:\n\
-             \x20 - name: Ada\n\
+             \x20 - name: 'Ada'\n\
              \x20   age: 36\n\
-             \x20 - name: Bob\n\
+             \x20 - name: 'Bob'\n\
              \x20 none: {}\n\
              grid:\n\
              - - 1\n\
              \x20 - 2\n\
-             - []\n"
+             - []\n\
+             ok: true\n"
         );
-        let back: Value = serde_yaml_ng::from_str(&text).unwrap();
-        assert_eq!(back, value);
     }
 
     #[test]

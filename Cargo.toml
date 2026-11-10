@@ -25,6 +25,7 @@ path-slash = "0.2.1"
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "system-proxy", "json", "gzip", "http2", "stream"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["preserve_order"] }
+serde-saphyr = { version = "=0.0.29", default-features = false, features = ["serialize"] }
 serde_yaml_ng = "0.10.0"
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "fs", "sync", "time"] }
