@@ -102,11 +102,8 @@ pub fn resolve(
             let requested = Path::new(key);
             if requested.has_root()
                 || matches!(requested.components().next(), Some(Component::Prefix(_)))
-                || key.contains('\\')
             {
-                return Err(fail(
-                    "must be relative to the config file's folder, with forward slashes".into(),
-                ));
+                return Err(fail("must be relative to the config file's folder".into()));
             }
             let path = base.join(requested);
             let canonical = path.canonicalize().ok();

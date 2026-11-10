@@ -878,24 +878,22 @@ fn a_collection_key_for_a_query_outside_the_root_is_left_to_its_own_run() {
 }
 
 #[test]
-fn a_collection_key_must_be_relative_with_forward_slashes() {
+fn a_collection_key_must_be_relative() {
     let dir = site("collection-key-shape", article_collection());
-    let absolute = dir.join("data/wp/article.graphql");
-    for key in [absolute.to_str().unwrap(), "sub\\article.graphql"] {
-        write(
-            &dir,
-            "data/wp/.graphqlrc.json",
-            &graphqlrc_json(json!({ key: article_collection() }), None),
-        );
-        let stub = start(Behaviour::Data(posts(&["hello"])));
-        let (status, err) = code(&gqlfreez(&dir, &stub.endpoint(), &[]));
-        assert_eq!(status, Some(2), "{key}: {err}");
-        assert!(
-            err.contains("must be relative to the config file's folder, with forward slashes"),
-            "{err}"
-        );
-        assert_eq!(stub.calls.load(Ordering::SeqCst), 0);
-    }
+    let key = dir.join("data/wp/article.graphql");
+    write(
+        &dir,
+        "data/wp/.graphqlrc.json",
+        &graphqlrc_json(json!({ key.to_str().unwrap(): article_collection() }), None),
+    );
+    let stub = start(Behaviour::Data(posts(&["hello"])));
+    let (status, err) = code(&gqlfreez(&dir, &stub.endpoint(), &[]));
+    assert_eq!(status, Some(2), "{err}");
+    assert!(
+        err.contains("must be relative to the config file's folder"),
+        "{err}"
+    );
+    assert_eq!(stub.calls.load(Ordering::SeqCst), 0);
 }
 
 #[test]
