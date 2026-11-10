@@ -653,7 +653,7 @@ fn collection_never_overwrites_a_hand_written_file() {
     let stub = start(Behaviour::Data(posts(&["hello", "world"])));
     let out = gqlfreez(&dir, &stub.endpoint(), &[]);
     assert_eq!(out.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("was not written by gqlfreez"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("was not generated from this query"));
     assert_eq!(read(&dir, "content/article/hello.md"), "mine\n");
     assert!(!dir.join("content/article/world.md").exists());
 }
@@ -739,25 +739,6 @@ fn collection_check_and_dry_run_count_pages_without_writing() {
 }
 
 #[test]
-fn collection_takes_over_pages_of_a_renamed_query() {
-    let dir = site("collection-rename", article_collection());
-    let stub = start(Behaviour::Data(posts(&["hello"])));
-    ok(&gqlfreez(&dir, &stub.endpoint(), &[]));
-    std::fs::rename(
-        dir.join("data/wp/article.graphql"),
-        dir.join("data/wp/post.graphql"),
-    )
-    .unwrap();
-    put(
-        &dir,
-        "data/wp/.graphqlrc.json",
-        &graphqlrc_json(json!({ "post.graphql": article_collection() }), None),
-    );
-    ok(&gqlfreez(&dir, &stub.endpoint(), &[]));
-    assert!(read(&dir, "content/article/hello.md").contains("from ../../data/wp/post.graphql"));
-}
-
-#[test]
 fn collection_two_queries_writing_the_same_page_write_nothing() {
     let dir = site("collection-overlap", article_collection());
     put(&dir, "data/wp/copy.graphql", ARTICLE_QUERY);
@@ -774,47 +755,6 @@ fn collection_two_queries_writing_the_same_page_write_nothing() {
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("written by two queries"));
     assert_eq!(pages(&dir), ["_index.md"]);
-}
-
-#[test]
-fn collection_moves_a_page_from_one_query_to_another_in_one_run() {
-    let dir = scratch("collection-move");
-    let mut collections = json!({});
-    for name in ["a", "b"] {
-        put(
-            &dir,
-            &format!("data/{name}.graphql"),
-            &format!("{{ {name} {{ nodes {{ slug }} }} }}"),
-        );
-        let mut collection = article_collection();
-        collection["list"] = json!(format!("{name}.nodes"));
-        collection["dir"] = json!("../content/article");
-        collection["frontMatter"] = json!({"slug": "{{item.slug}}"});
-        collections[format!("{name}.graphql")] = collection;
-    }
-    put(
-        &dir,
-        "data/.graphqlrc.json",
-        &graphqlrc_json(collections, None),
-    );
-    let hello = json!({"nodes": [{"slug": "hello"}]});
-    let none = json!({"nodes": []});
-    let stub = start(Behaviour::Data(json!({"a": hello, "b": none})));
-    ok(&gqlfreez(&dir, &stub.endpoint(), &[]));
-    assert!(read(&dir, "content/article/hello.md").contains("from ../../data/a.graphql"));
-
-    let stub = start(Behaviour::Data(json!({"a": none, "b": hello})));
-    ok(&gqlfreez(&dir, &stub.endpoint(), &[]));
-    assert!(read(&dir, "content/article/hello.md").contains("from ../../data/b.graphql"));
-
-    let stub = start(Behaviour::Data(json!({"a": hello, "b": hello})));
-    let out = gqlfreez(&dir, &stub.endpoint(), &[]);
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(1), "{err}");
-    assert!(
-        err.contains("is already written from ../../data/b.graphql"),
-        "{err}"
-    );
 }
 
 #[test]

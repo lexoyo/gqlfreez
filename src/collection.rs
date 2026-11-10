@@ -53,9 +53,6 @@ pub struct Plan {
     pub writes: Vec<(PathBuf, String)>,
     pub removals: Vec<PathBuf>,
     pub unchanged: usize,
-    /// Pages written by another query that still exists, with its name: only allowed if
-    /// that query's own plan removes them in the same run.
-    pub takeovers: Vec<(PathBuf, String)>,
 }
 
 /// Pages written, left alone and removed for one query. In `--check` and `--dry-run`,
@@ -679,24 +676,11 @@ impl Collection {
         let existing = self.scan()?;
         let produced: HashSet<String> = pages.iter().map(|(n, _)| n.to_lowercase()).collect();
         let mut plan = Plan::default();
-        let mut unclaimed = 0;
-        let mut claims: HashMap<String, bool> = HashMap::new();
-        let mut is_claimed = |owner: &String| {
-            *claims
-                .entry(owner.clone())
-                .or_insert_with(|| self.is_claimed(owner))
-        };
-
         for entry in existing.values() {
-            let (Some(owner), false) =
-                (&entry.owner, produced.contains(&entry.name.to_lowercase()))
-            else {
-                continue;
-            };
-            if *owner == self.owner {
+            if entry.owner.as_ref() == Some(&self.owner)
+                && !produced.contains(&entry.name.to_lowercase())
+            {
                 plan.removals.push(entry.path.clone());
-            } else if !is_claimed(owner) {
-                unclaimed += 1;
             }
         }
 
@@ -709,18 +693,12 @@ impl Collection {
                         entry.path.display()
                     )));
                 }
-                match &entry.owner {
-                    None => {
-                        return Err(fail(format!(
-                            "{} exists and was not written by gqlfreez, it is left alone \
-                             and nothing is written",
-                            entry.path.display()
-                        )))
-                    }
-                    Some(owner) if *owner != self.owner && is_claimed(owner) => {
-                        plan.takeovers.push((entry.path.clone(), owner.clone()));
-                    }
-                    _ => {}
+                if entry.owner.as_ref() != Some(&self.owner) {
+                    return Err(fail(format!(
+                        "{} exists and was not generated from this query, it is left alone \
+                         and nothing is written",
+                        entry.path.display()
+                    )));
                 }
                 if entry.name != name {
                     // Same file on a case-insensitive disk: remove it first, then write.
@@ -734,13 +712,6 @@ impl Collection {
         }
 
         plan.removals.sort();
-        if unclaimed > 0 {
-            logger.warn(&format!(
-                "{}: {unclaimed} file(s) generated from a query that no longer exists, or \
-                 no longer has a collection, left in place",
-                self.dir.display()
-            ));
-        }
         Ok(plan)
     }
 
@@ -749,30 +720,6 @@ impl Collection {
             path: self.config.clone(),
             message: format!("collection {}: {message}", self.key),
         }
-    }
-
-    /// A query that still exists and still has a collection owns its pages.
-    fn is_claimed(&self, owner: &str) -> bool {
-        let Ok(query) = self.dir.join(owner).canonicalize() else {
-            return false;
-        };
-        if !query.is_file() {
-            return false;
-        }
-        // Unreadable: taking its pages over could overwrite them for good.
-        let origin = match config::closest_file(query.parent().unwrap_or(&self.dir)) {
-            Ok(Some(origin)) => origin,
-            Ok(None) => return false,
-            Err(_) => return true,
-        };
-        let Ok(config) = config::read(&origin) else {
-            return true;
-        };
-        let base = origin.parent().unwrap_or(Path::new("."));
-        config
-            .collections
-            .keys()
-            .any(|key| base.join(key).canonicalize().is_ok_and(|p| p == query))
     }
 
     fn scan(&self) -> Result<HashMap<String, Existing>, Error> {
@@ -953,18 +900,8 @@ pub fn finish(plans: &[(usize, &Plan)]) -> Result<(), (usize, Error)> {
     Ok(())
 }
 
-/// Two queries writing the same page, found once every plan is known. A page moves from
-/// one query to another only when the first one no longer produces it.
+/// Two queries writing the same page, found once every plan is known.
 pub fn check_overlap(plans: &[(usize, &Plan)]) -> Option<(usize, String)> {
-    let removed: HashSet<&PathBuf> = plans.iter().flat_map(|(_, p)| &p.removals).collect();
-    for (index, plan) in plans {
-        if let Some((path, owner)) = plan.takeovers.iter().find(|(p, _)| !removed.contains(p)) {
-            return Some((
-                *index,
-                format!("{} is already written from {owner}", path.display()),
-            ));
-        }
-    }
     let mut seen: HashSet<String> = HashSet::new();
     for (index, plan) in plans {
         for (path, _) in &plan.writes {
