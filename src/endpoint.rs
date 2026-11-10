@@ -5,8 +5,6 @@
 //! are still read for their collections, but no URL or header of theirs is used, so a token
 //! meant for another server never reaches the forced one.
 
-use std::collections::HashMap;
-use std::path::Path;
 use std::sync::Arc;
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
@@ -20,26 +18,6 @@ use crate::options::Options;
 pub struct Target {
     pub url: String,
     pub headers: HeaderMap,
-}
-
-/// The config of each query, in the same order. Read before any request: a broken config
-/// must not surface after half the files were fetched.
-pub fn configs(queries: &[Query]) -> Result<Vec<Arc<Resolved>>, Error> {
-    let mut by_dir: HashMap<&Path, Arc<Resolved>> = HashMap::new();
-    let mut configs = vec![];
-    for q in queries {
-        let dir = q.source.parent().unwrap_or(Path::new("/"));
-        let config = match by_dir.get(dir) {
-            Some(c) => c.clone(),
-            None => {
-                let c = Arc::new(config::discover(dir)?);
-                by_dir.insert(dir, c.clone());
-                c
-            }
-        };
-        configs.push(config);
-    }
-    Ok(configs)
 }
 
 /// One target per query, in the same order.

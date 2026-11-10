@@ -6,9 +6,11 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::Deserialize;
 
+use crate::discover::Query;
 use crate::errors::Error;
 
 /// Search places, in order. Finding several is an error — never a silent pick.
@@ -108,23 +110,49 @@ pub struct Resolved {
 
 /// Find and read a config file, starting at `from` and walking up to the filesystem root.
 pub fn discover(from: &Path) -> Result<Resolved, Error> {
-    Ok(find(from, None)?
-        .map(|path| read(&path))
-        .transpose()?
-        .unwrap_or_default())
-}
-
-/// The config file closest to `from`, walking up no further than `limit` when there is one.
-pub(crate) fn find(from: &Path, limit: Option<&Path>) -> Result<Option<PathBuf>, Error> {
-    for current in from
-        .ancestors()
-        .take_while(|d| limit.is_none_or(|limit| d.starts_with(limit)))
-    {
-        if let Some(found) = file_in(current)? {
-            return Ok(Some(found));
+    for dir in from.ancestors() {
+        if let Some(file) = file_in(dir)? {
+            return read(&file);
         }
     }
-    Ok(None)
+    Ok(Resolved::default())
+}
+
+/// The configs of a run, each read once.
+#[derive(Default)]
+pub(crate) struct Configs {
+    /// The closest config of each query, in the same order.
+    pub closest: Vec<Arc<Resolved>>,
+    /// The closest configs, and every config between the root and the queries even if no
+    /// query uses it: a collection keyed there would otherwise be ignored without a word.
+    pub found: BTreeMap<PathBuf, Arc<Resolved>>,
+}
+
+/// Read before any request: a broken config must not surface after half the files were
+/// fetched. `root` and the queries must be canonical.
+pub(crate) fn search(queries: &[Query], root: &Path) -> Result<Configs, Error> {
+    let mut configs = Configs::default();
+    for q in queries {
+        let mut closest = None;
+        for dir in q.source.ancestors().skip(1) {
+            if closest.is_some() && !dir.starts_with(root) {
+                break;
+            }
+            let Some(file) = file_in(dir)? else {
+                continue;
+            };
+            // Whoever read it first has walked everything above it already.
+            if let Some(c) = configs.found.get(&file) {
+                closest.get_or_insert_with(|| c.clone());
+                break;
+            }
+            let config = Arc::new(read(&file)?);
+            configs.found.insert(file, config.clone());
+            closest.get_or_insert(config);
+        }
+        configs.closest.push(closest.unwrap_or_default());
+    }
+    Ok(configs)
 }
 
 fn file_in(current: &Path) -> Result<Option<PathBuf>, Error> {
@@ -171,7 +199,7 @@ fn file_in(current: &Path) -> Result<Option<PathBuf>, Error> {
     Ok(None)
 }
 
-pub(crate) fn read(path: &Path) -> Result<Resolved, Error> {
+fn read(path: &Path) -> Result<Resolved, Error> {
     let raw = std::fs::read_to_string(path)
         .map_err(|e| Error::Config(format!("{}: cannot be read: {e}", path.display())))?;
     let text = interpolate(&raw, path)?;

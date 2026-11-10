@@ -4,16 +4,14 @@
 //! Everything is computed in memory first (`plan`), and only written once every query has
 //! succeeded, so a failure while planning leaves the tree untouched, as for the JSON output.
 
-use std::collections::btree_map::Entry;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
 
 use handlebars::template::{Parameter, TemplateElement};
 use handlebars::{Context, Handlebars, PathSeg};
 use serde_json::{json, Map, Value};
 
-use crate::config::{self, Resolved};
+use crate::config::{self, Configs};
 use crate::discover::Query;
 use crate::errors::Error;
 use crate::logger::Logger;
@@ -71,7 +69,7 @@ impl Plan {
 /// a file outside `root` belongs to another run. `root` and the queries must be canonical.
 pub fn resolve(
     queries: &[Query],
-    configs: &[Arc<Resolved>],
+    configs: &Configs,
     root: &Path,
 ) -> Result<Vec<Option<Collection>>, Error> {
     let by_source: HashMap<&Path, usize> = queries
@@ -80,7 +78,7 @@ pub fn resolve(
         .map(|(i, q)| (q.source.as_path(), i))
         .collect();
     let mut collections: Vec<Option<Collection>> = queries.iter().map(|_| None).collect();
-    for (origin, config) in with_collections(queries, configs, root)? {
+    for (origin, config) in &configs.found {
         let base = origin.parent().unwrap_or(Path::new("/"));
         for (key, raw) in &config.collections {
             let fail = |why: String| {
@@ -112,8 +110,8 @@ pub fn resolve(
                     path.display()
                 )));
             };
-            let used = configs[i].origin.as_deref();
-            if used != Some(origin.as_path()) {
+            let used = configs.closest[i].origin.as_deref();
+            if used != Some(origin) {
                 return Err(fail(format!(
                     "names {}, which uses {} instead",
                     queries[i].source.display(),
@@ -123,53 +121,10 @@ pub fn resolve(
             if let Some(other) = &collections[i] {
                 return Err(fail(format!("names the same query as {:?}", other.key)));
             }
-            collections[i] = Some(load(&origin, key, raw, &queries[i], root)?);
+            collections[i] = Some(load(origin, key, raw, &queries[i], root)?);
         }
     }
     Ok(collections)
-}
-
-/// Every config with collections. Not only the configs the queries use: a key in a config no
-/// query uses would otherwise be ignored without a word. These are the configs between the
-/// root and the queries, and the one found from the root up.
-fn with_collections(
-    queries: &[Query],
-    configs: &[Arc<Resolved>],
-    root: &Path,
-) -> Result<Vec<(PathBuf, Arc<Resolved>)>, Error> {
-    let mut read: BTreeMap<PathBuf, Arc<Resolved>> = configs
-        .iter()
-        .filter_map(|c| c.origin.clone().map(|origin| (origin, c.clone())))
-        .collect();
-    let mut walked: HashSet<PathBuf> = HashSet::new();
-    for q in queries {
-        let mut from = q.source.parent().map(Path::to_owned);
-        while let Some(dir) = from {
-            let Some(file) = config::find(&dir, Some(root))? else {
-                break;
-            };
-            from = file.parent().and_then(Path::parent).map(Path::to_owned);
-            if !walked.insert(file.clone()) {
-                break;
-            }
-            if let Entry::Vacant(entry) = read.entry(file) {
-                let config = Arc::new(config::read(entry.key())?);
-                entry.insert(config);
-            }
-        }
-    }
-    // Above the root, a config no query uses must not block the run if it is broken.
-    if let Ok(Some(above)) = config::find(root, None) {
-        if let Entry::Vacant(entry) = read.entry(above) {
-            if let Ok(c) = config::read(entry.key()) {
-                entry.insert(Arc::new(c));
-            }
-        }
-    }
-    Ok(read
-        .into_iter()
-        .filter(|(_, c)| !c.collections.is_empty())
-        .collect())
 }
 
 /// Validate one entry. `origin`, `query` and `root` must be canonical.
