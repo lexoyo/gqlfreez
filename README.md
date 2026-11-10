@@ -173,6 +173,30 @@ Headers under `schema` are what give you autocompletion and schema checking insi
 `.graphql` files in VS Code and JetBrains. `${VAR}` and `${VAR:default}` are read from the
 environment, and from `.env` / `.env.local` unless you pass `--no-dotenv`.
 
+### Several data sources
+
+Each `.graphql` file takes the config closest to it: `gqlfreez` looks in the file's folder,
+then in each folder above, up to the directory you passed. One run can then freeze several
+APIs, each with its own address and headers:
+
+```
+data/
+  wp/
+    .graphqlrc.yml      # url: https://blog.example.com/graphql
+    posts.graphql
+  shop/
+    .graphqlrc.yml      # url: https://shop.example.com/graphql
+    products.graphql
+```
+
+```bash
+gqlfreez .
+```
+
+A file with no config between it and that directory uses the one found from the directory
+upwards, as with a single source. `--endpoint` applies to every file: the folder configs are
+left aside, so their tokens never reach it. `--header` is sent to every source.
+
 ## In CI
 
 ```yaml
@@ -209,10 +233,9 @@ found a file out of date.
 1. **Publish to npm and crates.io**, so `npx gqlfreez` and `cargo install gqlfreez` work
    (the npm wrapper is written, in `wrappers/node`, but nothing is published yet)
 2. Query variables
-3. Several named endpoints (`# @endpoint:` per file)
-4. Collect every error instead of stopping at the first one
-5. Full retry policy (exponential backoff, jitter)
-6. Shared fragments with `#import`
+3. Collect every error instead of stopping at the first one
+4. Full retry policy (exponential backoff, jitter)
+5. Shared fragments with `#import`
 7. Backward and nested pagination
 8. Merge identical queries across files
 9. Service mode (RPC over stdin/stdout) for generator plugins with hot reload
