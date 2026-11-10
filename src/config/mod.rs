@@ -72,6 +72,29 @@ pub enum Documents {
 pub struct Extensions {
     #[serde(default)]
     pub endpoints: BTreeMap<String, Endpoint>,
+    /// One entry per query, keyed by its path relative to the config file's folder.
+    #[serde(default)]
+    pub collections: BTreeMap<String, Collection>,
+}
+
+/// One file per item of a list in the result of a query.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct Collection {
+    pub list: String,
+    pub dir: String,
+    pub file: String,
+    #[serde(default)]
+    pub format: Format,
+    pub front_matter: serde_json::Value,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Format {
+    #[default]
+    Toml,
+    Yaml,
 }
 
 #[derive(Debug, Deserialize)]
@@ -92,6 +115,7 @@ pub struct Resolved {
     pub headers: Vec<(String, String)>,
     pub documents: Option<String>,
     pub origin: Option<PathBuf>,
+    pub collections: BTreeMap<String, Collection>,
 }
 
 /// Find and read a config file, starting at `from` and walking up to the filesystem root.
@@ -116,7 +140,21 @@ pub fn nearest(from: &Path, root: &Path) -> Result<Option<Resolved>, Error> {
     Ok(None)
 }
 
+/// The config file that applies to a file in `from`: the first one found walking up.
+pub fn closest_file(from: &Path) -> Result<Option<PathBuf>, Error> {
+    for current in from.ancestors() {
+        if let Some(found) = file_in(current)? {
+            return Ok(Some(found));
+        }
+    }
+    Ok(None)
+}
+
 fn in_dir(current: &Path) -> Result<Option<Resolved>, Error> {
+    file_in(current)?.map(|path| read(&path)).transpose()
+}
+
+fn file_in(current: &Path) -> Result<Option<PathBuf>, Error> {
     let found: Vec<PathBuf> = SEARCH_PLACES
         .iter()
         .map(|n| current.join(n))
@@ -140,7 +178,7 @@ fn in_dir(current: &Path) -> Result<Option<Resolved>, Error> {
         )));
     }
     if let Some(path) = found.into_iter().next() {
-        return read(&path).map(Some);
+        return Ok(Some(path));
     }
 
     let unsupported: Vec<String> = UNSUPPORTED_PLACES
@@ -161,11 +199,9 @@ fn in_dir(current: &Path) -> Result<Option<Resolved>, Error> {
     Ok(None)
 }
 
-fn read(path: &Path) -> Result<Resolved, Error> {
-    let raw = std::fs::read_to_string(path).map_err(|source| Error::Io {
-        path: path.to_owned(),
-        source,
-    })?;
+pub fn read(path: &Path) -> Result<Resolved, Error> {
+    let raw = std::fs::read_to_string(path)
+        .map_err(|e| Error::Config(format!("{}: cannot be read: {e}", path.display())))?;
     let text = interpolate(&raw, path)?;
 
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
@@ -206,6 +242,7 @@ fn flatten_projects(cfg: GraphqlConfig, path: &Path) -> Result<GraphqlConfig, Er
 fn resolve(cfg: GraphqlConfig, path: &Path) -> Resolved {
     let mut out = Resolved {
         origin: Some(path.to_owned()),
+        collections: cfg.extensions.collections.clone(),
         ..Default::default()
     };
 

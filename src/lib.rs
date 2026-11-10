@@ -38,7 +38,7 @@ pub struct FileResult {
     /// The output file it maps to.
     pub output: PathBuf,
     pub outcome: Outcome,
-    /// Pages written from the companion file's `split` section, when there is one.
+    /// Pages written from the query's collection, when it has one.
     pub split: Option<SplitReport>,
 }
 
@@ -79,21 +79,16 @@ pub async fn run(options: &Options) -> Result<Vec<FileResult>, Error> {
         source,
     })?;
     let queries = discover::find(&options.root, &options.glob)?;
-    // Companions are read before any request: a typo in one must not cost a full fetch.
-    let mut splits = vec![];
-    for q in &queries {
-        splits.push(match &q.companion {
-            Some(c) => split::load(c, &q.source, &root)?.map(Arc::new),
-            None => None,
-        });
-    }
     if queries.is_empty() {
         return Err(Error::NoQueries {
             root: options.root.clone(),
             glob: options.glob.clone(),
         });
     }
-    let targets = endpoint::resolve(&queries, options, &root)?;
+    // Configs are read before any request: a typo in one must not cost a full fetch.
+    let configs = endpoint::configs(&queries, &root)?;
+    let splits = split::resolve(&queries, &configs, &root)?;
+    let targets = endpoint::resolve(&queries, &configs, options, &root)?;
     if !options.check && !options.dry_run {
         output::sweep_temporaries(&queries.iter().map(|q| q.output.clone()).collect::<Vec<_>>());
         for split in splits.iter().flatten() {
@@ -160,7 +155,7 @@ pub async fn run(options: &Options) -> Result<Vec<FileResult>, Error> {
     Ok(results)
 }
 
-/// Fetch one file, and plan its pages if it has a companion. The pages are kept in memory
+/// Fetch one file, and plan its pages if it has a collection. The pages are kept in memory
 /// until the commit, so that nothing is written unless every query succeeded. A disk error
 /// while the files are moved into place can still leave some of them updated.
 async fn one(
@@ -170,16 +165,13 @@ async fn one(
     q: &discover::Query,
     split: Option<&split::Split>,
 ) -> (Outcome, Option<split::Plan>) {
-    let (data, outcome) = match fetch(client, options, target, q).await {
-        Fetched::Data(data, outcome) => (data, outcome),
-        Fetched::Done(Outcome::Skipped { reason }) if split.is_some() => {
-            let error = Error::Split {
-                path: q.companion.clone().unwrap_or_default(),
-                message: format!("nothing to split, the query is skipped ({reason})"),
-            };
+    let (data, outcome) = match (fetch(client, options, target, q).await, split) {
+        (Fetched::Data(data, outcome), _) => (data, outcome),
+        (Fetched::Done(Outcome::Skipped { reason }), Some(split)) => {
+            let error = split.error(format!("no list to read, the query is skipped ({reason})"));
             return (Outcome::Failed(error), None);
         }
-        Fetched::Done(outcome) => return (outcome, None),
+        (Fetched::Done(outcome), _) => return (outcome, None),
     };
     let Some(split) = split else {
         return (outcome, None);
@@ -198,7 +190,7 @@ enum Fetched {
     Done(Outcome),
 }
 
-/// The rendered JSON is staged in a temporary file. A result with a companion also stays in
+/// The rendered JSON is staged in a temporary file. A result with a collection also stays in
 /// memory, with its pages, until the commit.
 async fn fetch(
     client: &reqwest::Client,

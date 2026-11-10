@@ -412,7 +412,7 @@ fn no_matching_file_is_an_error() {
     );
 }
 
-// Split: one file per item of a list.
+// Collections: one file per item of a list.
 
 const ARTICLE_QUERY: &str = "{ posts(first: 10) { nodes { slug title tags author { name } } } }";
 
@@ -435,14 +435,26 @@ fn posts(slugs: &[&str]) -> Value {
     })).collect::<Vec<_>>()}})
 }
 
+/// A graphql-config with these collections and, when given, an endpoint and its token.
+fn graphqlrc_json(collections: Value, endpoint: Option<(&str, &str)>) -> String {
+    let mut extensions = json!({ "collections": collections });
+    if let Some((url, token)) = endpoint {
+        extensions["endpoints"] = json!({"default": {
+            "url": url,
+            "headers": {"Authorization": format!("Bearer {token}")}
+        }});
+    }
+    serde_json::to_string_pretty(&json!({ "extensions": extensions })).unwrap()
+}
+
 /// A site with the queries under data/ and the pages under content/.
-fn site(name: &str, companion: Value) -> PathBuf {
+fn site(name: &str, collection: Value) -> PathBuf {
     let dir = scratch(name);
     put(&dir, "data/wp/article.graphql", ARTICLE_QUERY);
     put(
         &dir,
-        "data/wp/article.gqlfreez.json",
-        &serde_json::to_string_pretty(&companion).unwrap(),
+        "data/wp/.graphqlrc.json",
+        &graphqlrc_json(json!({ "article.graphql": collection }), None),
     );
     put(
         &dir,
@@ -452,8 +464,8 @@ fn site(name: &str, companion: Value) -> PathBuf {
     dir
 }
 
-fn article_split() -> Value {
-    json!({"split": {
+fn article_collection() -> Value {
+    json!({
         "list": "posts.nodes",
         "dir": "../../content/article",
         "file": "{slug}.md",
@@ -462,7 +474,14 @@ fn article_split() -> Value {
             "path": "/blog/{slug}/",
             "extra": {"item": "{@item}"}
         }
-    }})
+    })
+}
+
+fn code(out: &std::process::Output) -> (Option<i32>, String) {
+    (
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 fn ok(out: &std::process::Output) -> String {
@@ -482,7 +501,7 @@ fn pages(dir: &Path) -> Vec<String> {
 
 #[test]
 fn split_writes_one_page_per_item() {
-    let dir = site("split-basic", article_split());
+    let dir = site("split-basic", article_collection());
     let stub = start(Behaviour::Data(posts(&["hello", "world"])));
     let err = ok(&gqlfreez(&dir, &stub.endpoint(), &[]));
     assert!(err.contains("2 page(s) written, 0 removed"), "{err}");
@@ -513,16 +532,18 @@ fn split_in_yaml_drops_nulls_too() {
     put(&dir, "data/wp/article.graphql", ARTICLE_QUERY);
     put(
         &dir,
-        "data/wp/article.gqlfreez.yaml",
+        "data/wp/.graphqlrc.yml",
         "# comments are welcome here\n\
-         split:\n\
-         \x20 list: posts.nodes\n\
-         \x20 dir: ../../content/article\n\
-         \x20 file: \"{@index}.md\"\n\
-         \x20 format: yaml\n\
-         \x20 frontMatter:\n\
-         \x20   title: \"{title}\"\n\
-         \x20   author: \"{author}\"\n",
+         extensions:\n\
+         \x20 collections:\n\
+         \x20   article.graphql:\n\
+         \x20     list: posts.nodes\n\
+         \x20     dir: ../../content/article\n\
+         \x20     file: \"{@index}.md\"\n\
+         \x20     format: yaml\n\
+         \x20     frontMatter:\n\
+         \x20       title: \"{title}\"\n\
+         \x20       author: \"{author}\"\n",
     );
     let stub = start(Behaviour::Data(posts(&["hello"])));
     ok(&gqlfreez(&dir, &stub.endpoint(), &[]));
@@ -539,7 +560,7 @@ fn split_in_yaml_drops_nulls_too() {
 
 #[test]
 fn split_keeps_hand_written_files_and_removes_its_own() {
-    let dir = site("split-keep", article_split());
+    let dir = site("split-keep", article_collection());
     put(
         &dir,
         "content/article/notes.md",
@@ -560,7 +581,7 @@ fn split_keeps_hand_written_files_and_removes_its_own() {
 
 #[test]
 fn split_of_an_empty_list_removes_its_pages_only() {
-    let dir = site("split-empty", article_split());
+    let dir = site("split-empty", article_collection());
     let stub = start(Behaviour::Data(posts(&["hello", "world"])));
     ok(&gqlfreez(&dir, &stub.endpoint(), &[]));
     let stub = start(Behaviour::Data(posts(&[])));
@@ -571,7 +592,7 @@ fn split_of_an_empty_list_removes_its_pages_only() {
 
 #[test]
 fn split_does_not_rewrite_pages_when_the_list_is_reordered() {
-    let dir = site("split-reorder", article_split());
+    let dir = site("split-reorder", article_collection());
     let stub = start(Behaviour::Data(posts(&["hello", "world"])));
     ok(&gqlfreez(&dir, &stub.endpoint(), &[]));
     let mtime = |name: &str| {
@@ -591,7 +612,7 @@ fn split_does_not_rewrite_pages_when_the_list_is_reordered() {
 
 #[test]
 fn split_slug_collision_writes_nothing() {
-    let dir = site("split-collision", article_split());
+    let dir = site("split-collision", article_collection());
     let stub = start(Behaviour::Data(posts(&["hello", "Hello"])));
     let out = gqlfreez(&dir, &stub.endpoint(), &[]);
     assert_eq!(out.status.code(), Some(1));
@@ -603,7 +624,7 @@ fn split_slug_collision_writes_nothing() {
 
 #[test]
 fn split_never_overwrites_a_hand_written_file() {
-    let dir = site("split-handwritten", article_split());
+    let dir = site("split-handwritten", article_collection());
     put(&dir, "content/article/hello.md", "mine\n");
     let stub = start(Behaviour::Data(posts(&["hello", "world"])));
     let out = gqlfreez(&dir, &stub.endpoint(), &[]);
@@ -615,9 +636,9 @@ fn split_never_overwrites_a_hand_written_file() {
 
 #[test]
 fn split_missing_field_names_the_item() {
-    let mut companion = article_split();
-    companion["split"]["frontMatter"]["path"] = json!("/blog/{author.handle}/");
-    let dir = site("split-missing", companion);
+    let mut collection = article_collection();
+    collection["frontMatter"]["path"] = json!("/blog/{author.handle}/");
+    let dir = site("split-missing", collection);
     let stub = start(Behaviour::Data(posts(&["hello"])));
     let out = gqlfreez(&dir, &stub.endpoint(), &[]);
     assert_eq!(out.status.code(), Some(1));
@@ -628,9 +649,9 @@ fn split_missing_field_names_the_item() {
 
 #[test]
 fn split_cannot_write_outside_the_root() {
-    let mut companion = article_split();
-    companion["split"]["dir"] = json!("../../../elsewhere");
-    let dir = site("split-outside", companion);
+    let mut collection = article_collection();
+    collection["dir"] = json!("../../../elsewhere");
+    let dir = site("split-outside", collection);
     let stub = start(Behaviour::Data(posts(&["hello"])));
     let out = gqlfreez(&dir, &stub.endpoint(), &[]);
     assert_eq!(out.status.code(), Some(2), "a configuration problem");
@@ -643,14 +664,11 @@ fn split_cannot_write_outside_the_root() {
 }
 
 #[test]
-fn split_companion_typo_is_refused_before_any_request() {
-    let mut companion = article_split();
-    companion["split"]["frontmatter"] = companion["split"]["frontMatter"].take();
-    companion["split"]
-        .as_object_mut()
-        .unwrap()
-        .remove("frontMatter");
-    let dir = site("split-typo", companion);
+fn a_collection_with_an_unknown_key_is_refused_before_any_request() {
+    let mut collection = article_collection();
+    collection["frontmatter"] = collection["frontMatter"].take();
+    collection.as_object_mut().unwrap().remove("frontMatter");
+    let dir = site("split-typo", collection);
     let stub = start(Behaviour::Data(posts(&["hello"])));
     let out = gqlfreez(&dir, &stub.endpoint(), &[]);
     assert_eq!(out.status.code(), Some(2), "a configuration problem");
@@ -659,23 +677,20 @@ fn split_companion_typo_is_refused_before_any_request() {
 }
 
 #[test]
-fn an_unreadable_companion_is_a_configuration_problem() {
-    let dir = site("split-unreadable", article_split());
-    std::fs::write(dir.join("data/wp/article.gqlfreez.json"), b"\xff\xfe").unwrap();
+fn an_unreadable_config_is_a_configuration_problem() {
+    let dir = site("split-unreadable", article_collection());
+    std::fs::write(dir.join("data/wp/.graphqlrc.json"), b"\xff\xfe").unwrap();
     let stub = start(Behaviour::Data(posts(&["hello"])));
     let out = gqlfreez(&dir, &stub.endpoint(), &[]);
     let err = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(2), "{err}");
-    assert!(
-        err.contains("article.gqlfreez.json: cannot be read"),
-        "{err}"
-    );
+    assert!(err.contains(".graphqlrc.json: cannot be read"), "{err}");
     assert_eq!(stub.calls.load(Ordering::SeqCst), 0);
 }
 
 #[test]
 fn split_check_and_dry_run_count_pages_without_writing() {
-    let dir = site("split-check", article_split());
+    let dir = site("split-check", article_collection());
     let stub = start(Behaviour::Data(posts(&["hello", "world"])));
     ok(&gqlfreez(&dir, &stub.endpoint(), &[]));
     std::fs::remove_file(dir.join("content/article/world.md")).unwrap();
@@ -698,28 +713,34 @@ fn split_check_and_dry_run_count_pages_without_writing() {
 
 #[test]
 fn split_takes_over_pages_of_a_renamed_query() {
-    let dir = site("split-rename", article_split());
+    let dir = site("split-rename", article_collection());
     let stub = start(Behaviour::Data(posts(&["hello"])));
     ok(&gqlfreez(&dir, &stub.endpoint(), &[]));
-    for ext in ["graphql", "gqlfreez.json"] {
-        std::fs::rename(
-            dir.join(format!("data/wp/article.{ext}")),
-            dir.join(format!("data/wp/post.{ext}")),
-        )
-        .unwrap();
-    }
+    std::fs::rename(
+        dir.join("data/wp/article.graphql"),
+        dir.join("data/wp/post.graphql"),
+    )
+    .unwrap();
+    put(
+        &dir,
+        "data/wp/.graphqlrc.json",
+        &graphqlrc_json(json!({ "post.graphql": article_collection() }), None),
+    );
     ok(&gqlfreez(&dir, &stub.endpoint(), &[]));
     assert!(read(&dir, "content/article/hello.md").contains("from ../../data/wp/post.graphql"));
 }
 
 #[test]
 fn split_two_queries_writing_the_same_page_write_nothing() {
-    let dir = site("split-overlap", article_split());
+    let dir = site("split-overlap", article_collection());
     put(&dir, "data/wp/copy.graphql", ARTICLE_QUERY);
     put(
         &dir,
-        "data/wp/copy.gqlfreez.json",
-        &article_split().to_string(),
+        "data/wp/.graphqlrc.json",
+        &graphqlrc_json(
+            json!({ "article.graphql": article_collection(), "copy.graphql": article_collection() }),
+            None,
+        ),
     );
     let stub = start(Behaviour::Data(posts(&["hello"])));
     let out = gqlfreez(&dir, &stub.endpoint(), &[]);
@@ -731,22 +752,24 @@ fn split_two_queries_writing_the_same_page_write_nothing() {
 #[test]
 fn split_moves_a_page_from_one_query_to_another_in_one_run() {
     let dir = scratch("split-move");
+    let mut collections = json!({});
     for name in ["a", "b"] {
         put(
             &dir,
             &format!("data/{name}.graphql"),
             &format!("{{ {name} {{ nodes {{ slug }} }} }}"),
         );
-        let mut companion = article_split();
-        companion["split"]["list"] = json!(format!("{name}.nodes"));
-        companion["split"]["dir"] = json!("../content/article");
-        companion["split"]["frontMatter"] = json!({"slug": "{slug}"});
-        put(
-            &dir,
-            &format!("data/{name}.gqlfreez.json"),
-            &companion.to_string(),
-        );
+        let mut collection = article_collection();
+        collection["list"] = json!(format!("{name}.nodes"));
+        collection["dir"] = json!("../content/article");
+        collection["frontMatter"] = json!({"slug": "{slug}"});
+        collections[format!("{name}.graphql")] = collection;
     }
+    put(
+        &dir,
+        "data/.graphqlrc.json",
+        &graphqlrc_json(collections, None),
+    );
     let hello = json!({"nodes": [{"slug": "hello"}]});
     let none = json!({"nodes": []});
     let stub = start(Behaviour::Data(json!({"a": hello, "b": none})));
@@ -769,7 +792,7 @@ fn split_moves_a_page_from_one_query_to_another_in_one_run() {
 
 #[test]
 fn split_of_a_null_list_writes_and_removes_nothing() {
-    let dir = site("split-null-list", article_split());
+    let dir = site("split-null-list", article_collection());
     let stub = start(Behaviour::Data(posts(&["hello"])));
     ok(&gqlfreez(&dir, &stub.endpoint(), &[]));
     let before = read(&dir, "data/wp/article.json");
@@ -792,14 +815,16 @@ fn split_yaml_quotes_strings() {
     put(&dir, "data/countries.graphql", "{ countries { code } }");
     put(
         &dir,
-        "data/countries.gqlfreez.yaml",
-        "split:\n\
-         \x20 list: countries\n\
-         \x20 dir: ../content\n\
-         \x20 file: \"{code}.md\"\n\
-         \x20 format: yaml\n\
-         \x20 frontMatter:\n\
-         \x20   code: \"{code}\"\n",
+        "data/.graphqlrc.yml",
+        "extensions:\n\
+         \x20 collections:\n\
+         \x20   countries.graphql:\n\
+         \x20     list: countries\n\
+         \x20     dir: ../content\n\
+         \x20     file: \"{code}.md\"\n\
+         \x20     format: yaml\n\
+         \x20     frontMatter:\n\
+         \x20       code: \"{code}\"\n",
     );
     let stub = start(Behaviour::Data(json!({"countries": [{"code": "NO"}]})));
     ok(&gqlfreez(&dir, &stub.endpoint(), &[]));
@@ -814,7 +839,7 @@ fn split_yaml_quotes_strings() {
 
 #[test]
 fn split_removes_temporary_pages_left_by_a_crash() {
-    let dir = site("split-stale-temp", article_split());
+    let dir = site("split-stale-temp", article_collection());
     let stub = start(Behaviour::Data(posts(&["hello"])));
     ok(&gqlfreez(&dir, &stub.endpoint(), &[]));
     let page = read(&dir, "content/article/hello.md");
@@ -829,7 +854,7 @@ fn split_removes_temporary_pages_left_by_a_crash() {
 
 #[test]
 fn check_and_dry_run_leave_temporary_pages_alone() {
-    let dir = site("split-stale-temp-dry", article_split());
+    let dir = site("split-stale-temp-dry", article_collection());
     let stub = start(Behaviour::Data(posts(&["hello"])));
     ok(&gqlfreez(&dir, &stub.endpoint(), &[]));
     let page = read(&dir, "content/article/hello.md");
@@ -848,7 +873,7 @@ fn check_and_dry_run_leave_temporary_pages_alone() {
 
 #[test]
 fn split_refuses_a_directory_in_place_of_a_page_before_writing() {
-    let dir = site("split-dir-in-the-way", article_split());
+    let dir = site("split-dir-in-the-way", article_collection());
     std::fs::create_dir_all(dir.join("content/article/world.md")).unwrap();
     let stub = start(Behaviour::Data(posts(&["hello", "world"])));
     let out = gqlfreez(&dir, &stub.endpoint(), &[]);
@@ -862,7 +887,7 @@ fn split_refuses_a_directory_in_place_of_a_page_before_writing() {
 #[cfg(unix)]
 #[test]
 fn split_refuses_a_symbolic_link_in_place_of_a_page_before_writing() {
-    let dir = site("split-link-in-the-way", article_split());
+    let dir = site("split-link-in-the-way", article_collection());
     put(&dir, "elsewhere.md", "kept\n");
     std::os::unix::fs::symlink(
         dir.join("elsewhere.md"),
@@ -883,6 +908,117 @@ fn split_refuses_a_symbolic_link_in_place_of_a_page_before_writing() {
     assert_eq!(read(&dir, "elsewhere.md"), "kept\n");
     assert_eq!(pages(&dir), ["_index.md", "world.md"]);
     assert!(!dir.join("data/wp/article.json").exists());
+}
+
+#[test]
+fn a_collection_key_with_no_query_is_refused_before_any_request() {
+    let dir = site("collection-no-query", article_collection());
+    put(
+        &dir,
+        "data/wp/.graphqlrc.json",
+        &graphqlrc_json(
+            json!({ "article.graphql": article_collection(), "gone.graphql": article_collection() }),
+            None,
+        ),
+    );
+    let stub = start(Behaviour::Data(posts(&["hello"])));
+    let (status, err) = code(&gqlfreez(&dir, &stub.endpoint(), &[]));
+    assert_eq!(status, Some(2), "{err}");
+    assert!(
+        err.contains(".graphqlrc.json") && err.contains("\"gone.graphql\" names no query file"),
+        "{err}"
+    );
+    assert_eq!(stub.calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn a_collection_key_for_a_query_of_another_config_is_refused() {
+    let dir = scratch("collection-other-config");
+    put(&dir, "data/wp/article.graphql", ARTICLE_QUERY);
+    put(
+        &dir,
+        "data/wp/.graphqlrc.json",
+        &graphqlrc_json(json!({}), None),
+    );
+    let mut collection = article_collection();
+    collection["dir"] = json!("../content/article");
+    put(
+        &dir,
+        "data/.graphqlrc.json",
+        &graphqlrc_json(json!({ "wp/article.graphql": collection }), None),
+    );
+    put(&dir, "data/top.graphql", "{ posts { nodes { slug } } }");
+    let stub = start(Behaviour::Data(posts(&["hello"])));
+    let (status, err) = code(&gqlfreez(&dir, &stub.endpoint(), &[]));
+    assert_eq!(status, Some(2), "{err}");
+    assert!(
+        err.contains("data/.graphqlrc.json") && err.contains("\"wp/article.graphql\" names"),
+        "{err}"
+    );
+    assert!(err.contains("wp/.graphqlrc.json instead"), "{err}");
+    assert_eq!(stub.calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn dir_is_relative_to_the_config_folder() {
+    let dir = scratch("collection-config-folder");
+    put(&dir, "data/wp/article.graphql", ARTICLE_QUERY);
+    let mut collection = article_collection();
+    collection["dir"] = json!("content/article");
+    put(
+        &dir,
+        ".graphqlrc.json",
+        &graphqlrc_json(json!({ "data/wp/article.graphql": collection }), None),
+    );
+    let stub = start(Behaviour::Data(posts(&["hello"])));
+    ok(&gqlfreez(&dir, &stub.endpoint(), &[]));
+    assert!(read(&dir, "content/article/hello.md")
+        .contains("# generated by gqlfreez from ../../data/wp/article.graphql, do not edit"));
+}
+
+#[test]
+fn a_query_in_a_subfolder_is_keyed_by_its_relative_path() {
+    let dir = scratch("collection-subfolder");
+    put(&dir, "data/blog/posts.graphql", ARTICLE_QUERY);
+    put(
+        &dir,
+        "data/.graphqlrc.toml",
+        "[extensions.collections.\"blog/posts.graphql\"]\n\
+         list = \"posts.nodes\"\n\
+         dir = \"../content/article\"\n\
+         file = \"{slug}.md\"\n\
+         \n\
+         [extensions.collections.\"blog/posts.graphql\".frontMatter]\n\
+         title = \"{title}\"\n",
+    );
+    let stub = start(Behaviour::Data(posts(&["hello"])));
+    ok(&gqlfreez(&dir, &stub.endpoint(), &[]));
+    assert_eq!(
+        read(&dir, "content/article/hello.md"),
+        "+++\n\
+         # generated by gqlfreez from ../../data/blog/posts.graphql, do not edit\n\
+         title = \"About hello\"\n\
+         +++\n"
+    );
+}
+
+#[test]
+fn a_collection_works_with_the_endpoint_flag_without_the_config_headers() {
+    let dir = site("collection-endpoint-flag", article_collection());
+    let configured = start(Behaviour::Simple);
+    put(
+        &dir,
+        "data/wp/.graphqlrc.json",
+        &graphqlrc_json(
+            json!({ "article.graphql": article_collection() }),
+            Some((&configured.endpoint(), "config-token")),
+        ),
+    );
+    let forced = start(Behaviour::Data(posts(&["hello"])));
+    ok(&gqlfreez(&dir, &forced.endpoint(), &[]));
+    assert_eq!(pages(&dir), ["_index.md", "hello.md"]);
+    assert_eq!(auth(&forced), [""]);
+    assert_eq!(configured.calls.load(Ordering::SeqCst), 0);
 }
 
 // One run, several data sources: each query takes the graphql-config closest to it.
@@ -912,14 +1048,21 @@ fn auth(stub: &Stub) -> Vec<String> {
 }
 
 /// A site with the queries under data/ and the pages under content/: two sources, one
-/// `.graphqlrc.yml` each; `wp` is split.
+/// graphql-config each; `wp` has a collection.
 fn two_sources(name: &str) -> (PathBuf, Stub, Stub) {
-    let dir = site(name, article_split());
+    let dir = site(name, article_collection());
     let wp = start(Behaviour::Data(posts(&["hello", "world"])));
     let shop = start(Behaviour::Data(
         json!({"products": {"nodes": [{"name": "mug"}]}}),
     ));
-    graphqlrc(&dir, "data/wp/.graphqlrc.yml", &wp.endpoint(), "wp-token");
+    put(
+        &dir,
+        "data/wp/.graphqlrc.json",
+        &graphqlrc_json(
+            json!({ "article.graphql": article_collection() }),
+            Some((&wp.endpoint(), "wp-token")),
+        ),
+    );
     put(
         &dir,
         "data/shop/products.graphql",
@@ -1006,7 +1149,7 @@ fn the_endpoint_flag_wins_over_every_config() {
 }
 
 #[test]
-fn the_endpoint_flag_reads_no_config_at_all() {
+fn the_endpoint_flag_takes_no_url_or_header_from_a_config() {
     let dir = scratch("sources-flag-root");
     let configured = start(Behaviour::Simple);
     graphqlrc(&dir, ".graphqlrc", &configured.endpoint(), "root-token");

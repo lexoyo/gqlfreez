@@ -1,13 +1,14 @@
 //! Which endpoint each query file talks to, and with which headers.
 //!
-//! `--endpoint` applies to every file, with the `--header` values only: no graphql-config is
-//! read, so a token meant for another server never reaches the forced one. Otherwise each
-//! file takes the graphql-config closest to it, walking up no further than the root, so
-//! that one run can freeze several data sources. A file with no config of its own falls
-//! back on the one found from the root up.
+//! Each file takes the graphql-config closest to it, walking up no further than the root,
+//! so that one run can freeze several data sources. A file with no config of its own falls
+//! back on the one found from the root up. `--endpoint` applies to every file, with the
+//! `--header` values only: the configs are still read for their collections, but no URL or
+//! header of theirs is used, so a token meant for another server never reaches the forced one.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
@@ -22,42 +23,64 @@ pub struct Target {
     pub headers: HeaderMap,
 }
 
-/// One target per query, in the same order. Resolved before any request: a missing endpoint
+/// The config of each query, in the same order. Read before any request: a broken config
 /// must not surface after half the files were fetched.
-pub fn resolve(queries: &[Query], options: &Options, root: &Path) -> Result<Vec<Target>, Error> {
+pub fn configs(queries: &[Query], root: &Path) -> Result<Vec<Arc<Resolved>>, Error> {
+    // Looked up only when needed: a broken config above the root must not block a run
+    // where every file has its own.
+    let mut root_config: Option<Arc<Resolved>> = None;
+    let mut by_dir: HashMap<PathBuf, Arc<Resolved>> = HashMap::new();
+    let mut configs = vec![];
+    for q in queries {
+        let dir = query_dir(q, root);
+        if let Some(c) = by_dir.get(&dir) {
+            configs.push(c.clone());
+            continue;
+        }
+        let config = match config::nearest(&dir, root)? {
+            Some(c) => Arc::new(c),
+            None => match &root_config {
+                Some(c) => c.clone(),
+                None => {
+                    let c = Arc::new(config::discover(root)?);
+                    root_config = Some(c.clone());
+                    c
+                }
+            },
+        };
+        by_dir.insert(dir, config.clone());
+        configs.push(config);
+    }
+    Ok(configs)
+}
+
+fn query_dir(q: &Query, root: &Path) -> PathBuf {
+    q.source
+        .parent()
+        .and_then(|d| d.canonicalize().ok())
+        .unwrap_or_else(|| root.to_owned())
+}
+
+/// One target per query, in the same order.
+pub fn resolve(
+    queries: &[Query],
+    configs: &[Arc<Resolved>],
+    options: &Options,
+    root: &Path,
+) -> Result<Vec<Target>, Error> {
     if let Some(url) = &options.endpoint {
         let target = target(url.clone(), &[], &options.headers)?;
         return Ok(vec![target; queries.len()]);
     }
 
-    // Looked up only when needed: a broken config above the root must not block a run
-    // where every file has its own.
-    let mut root_config: Option<Resolved> = None;
-    let mut from_root = || -> Result<Resolved, Error> {
-        if let Some(c) = &root_config {
-            return Ok(c.clone());
-        }
-        let c = config::discover(root)?;
-        root_config = Some(c.clone());
-        Ok(c)
-    };
-
     let mut by_dir: HashMap<PathBuf, Target> = HashMap::new();
     let mut targets = vec![];
-    for q in queries {
-        let dir = q
-            .source
-            .parent()
-            .and_then(|d| d.canonicalize().ok())
-            .unwrap_or_else(|| root.to_owned());
+    for (q, config) in queries.iter().zip(configs) {
+        let dir = query_dir(q, root);
         if let Some(t) = by_dir.get(&dir) {
             targets.push(t.clone());
             continue;
         }
-        let config = match config::nearest(&dir, root)? {
-            Some(c) => c,
-            None => from_root()?,
-        };
         let Some(url) = config.endpoint.clone() else {
             return Err(Error::Config(format!(
                 "{}: no GraphQL endpoint. Pass --endpoint, or put a graphql-config \
