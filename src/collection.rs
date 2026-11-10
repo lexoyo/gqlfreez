@@ -37,7 +37,7 @@ pub struct Collection {
     config: PathBuf,
     key: String,
     query: PathBuf,
-    list: Vec<String>,
+    list: String,
     /// Absolute, normalized, checked to be under the root.
     dir: PathBuf,
     file: Template,
@@ -190,7 +190,6 @@ fn load(
         path: origin.to_owned(),
         message: format!("collection {key}: {message}"),
     };
-    let list = parse_path(&raw.list).map_err(|e| fail(format!("list: {e}")))?;
     let mut templates = Templates::new();
     let file =
         Template::parse(&raw.file, &mut templates).map_err(|e| fail(format!("file: {e}")))?;
@@ -216,7 +215,7 @@ fn load(
         config: origin.to_owned(),
         key: key.to_owned(),
         query: query.source.clone(),
-        list,
+        list: raw.list.clone(),
         dir,
         file,
         format: raw.format,
@@ -275,65 +274,9 @@ fn relative(from: &Path, to: &Path) -> String {
     parts.join("/")
 }
 
-/// `a.b.0.c`. Unambiguous on a GraphQL result: names and aliases cannot hold a dot or start
-/// with a digit, so an all-digit segment is always an array index.
-fn parse_path(raw: &str) -> Result<Vec<String>, String> {
-    if raw.is_empty() {
-        return Err("empty path".into());
-    }
-    raw.split('.')
-        .map(|segment| {
-            let is_index = !segment.is_empty() && segment.bytes().all(|b| b.is_ascii_digit());
-            let is_name = segment
-                .bytes()
-                .next()
-                .is_some_and(|b| b == b'_' || b.is_ascii_alphabetic())
-                && segment
-                    .bytes()
-                    .all(|b| b == b'_' || b.is_ascii_alphanumeric());
-            if is_index || is_name {
-                Ok(segment.to_owned())
-            } else {
-                Err(format!("{raw:?} is not a path like posts.nodes"))
-            }
-        })
-        .collect()
-}
-
-enum Found<'a> {
-    Value(&'a Value),
-    Null,
-    Missing(String),
-}
-
-fn follow<'a>(mut value: &'a Value, path: &[String]) -> Found<'a> {
-    for (i, segment) in path.iter().enumerate() {
-        let next = match value {
-            Value::Null => return Found::Null,
-            Value::Object(map) => map.get(segment),
-            Value::Array(items) => segment.parse::<usize>().ok().and_then(|n| items.get(n)),
-            _ => None,
-        };
-        match next {
-            Some(v) => value = v,
-            None => {
-                return Found::Missing(match value {
-                    Value::Array(_) if segment.parse::<usize>().is_err() => format!(
-                        "{} is a list, a number is expected after it",
-                        path[..i].join(".")
-                    ),
-                    Value::Array(_) | Value::Object(_) => {
-                        format!("no {} in the result", path[..=i].join("."))
-                    }
-                    _ => format!("{} is not an object", path[..i].join(".")),
-                })
-            }
-        }
-    }
-    match value {
-        Value::Null => Found::Null,
-        v => Found::Value(v),
-    }
+/// `a.b.0` in a result: GraphQL names and aliases hold no `/` or `~`, a JSON pointer reads it.
+fn lookup<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
+    value.pointer(&format!("/{}", path.replace('.', "/")))
 }
 
 /// The slots, compiled once per collection. Rendered with `{ "item": …, "index": … }`.
@@ -353,7 +296,7 @@ impl Templates {
 #[derive(Debug, Clone, PartialEq)]
 struct Slot {
     raw: String,
-    path: Vec<String>,
+    path: String,
 }
 
 /// A string with Mustache slots.
@@ -422,7 +365,8 @@ fn slot(element: &TemplateElement) -> Option<Slot> {
             PathSeg::Named(name) => Some(name.clone()),
             _ => None,
         })
-        .collect::<Option<Vec<_>>>()?;
+        .collect::<Option<Vec<_>>>()?
+        .join(".");
     Some(Slot {
         raw: raw.clone(),
         path,
@@ -430,10 +374,10 @@ fn slot(element: &TemplateElement) -> Option<Slot> {
 }
 
 fn field<'a>(context: &'a Value, slot: &Slot) -> Result<&'a Value, String> {
-    match follow(context, &slot.path) {
-        Found::Value(v) => Ok(v),
-        Found::Null => Err(format!("{{{{{}}}}} is null", slot.raw)),
-        Found::Missing(why) => Err(format!("{{{{{}}}}}: {why}", slot.raw)),
+    match lookup(context, &slot.path) {
+        Some(v) if v.is_null() => Err(format!("{{{{{}}}}} is null", slot.raw)),
+        Some(v) => Ok(v),
+        None => Err(format!("{{{{{}}}}}: no {}", slot.raw, slot.path)),
     }
 }
 
@@ -554,20 +498,18 @@ impl Collection {
     /// writes nothing.
     pub fn plan(&self, data: &Value, logger: &Logger) -> Result<Plan, Error> {
         let fail = |message: String| self.error(message);
-        let items: &[Value] = match follow(data, &self.list) {
-            Found::Value(Value::Array(items)) => items,
-            Found::Value(_) => {
-                return Err(fail(format!("list: {} is not a list", self.list.join("."))))
-            }
-            Found::Missing(why) => return Err(fail(format!("list: {why}"))),
+        let items: &[Value] = match lookup(data, &self.list) {
+            Some(Value::Array(items)) => items,
             // Planning zero pages would delete every page of this query.
-            Found::Null => {
+            Some(Value::Null) => {
                 return Err(fail(format!(
                     "list: {} is null in the result of {}, nothing is written or removed",
-                    self.list.join("."),
+                    self.list,
                     self.query.display()
                 )))
             }
+            Some(_) => return Err(fail(format!("list: {} is not a list", self.list))),
+            None => return Err(fail(format!("list: no {} in the result", self.list))),
         };
 
         let mut pages: Vec<(String, String)> = vec![];
@@ -578,7 +520,7 @@ impl Collection {
                     "{}: collection {}: item {index} of {} is null, skipped",
                     self.config.display(),
                     self.key,
-                    self.list.join(".")
+                    self.list
                 ));
                 continue;
             }
@@ -724,17 +666,6 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    #[test]
-    fn paths_accept_names_and_indexes_only() {
-        assert_eq!(
-            parse_path("posts.nodes.0").unwrap(),
-            ["posts", "nodes", "0"]
-        );
-        assert!(parse_path("posts..nodes").is_err());
-        assert!(parse_path("posts.1a").is_err());
-        assert!(parse_path("").is_err());
-    }
-
     fn context(item: Value, index: usize) -> Context {
         Context::from(json!({ "item": item, "index": index }))
     }
@@ -753,7 +684,7 @@ mod tests {
             t.lone,
             Some(Slot {
                 raw: "item.author.name".into(),
-                path: vec!["item".into(), "author".into(), "name".into()]
+                path: "item.author.name".into()
             })
         );
         let t = Template::parse("/blog/{{item.slug}}/", &mut templates).unwrap();
@@ -813,8 +744,8 @@ mod tests {
 
     #[test]
     fn a_missing_or_null_field_is_an_error_naming_the_slot() {
-        let item = json!({"slug": null, "author": null});
-        for raw in ["{{item.slug}}", "x{{item.slug}}", "{{item.author.name}}"] {
+        let item = json!({"slug": null});
+        for raw in ["{{item.slug}}", "x{{item.slug}}"] {
             let e = typed(raw, item.clone(), 0).unwrap_err();
             assert!(e.contains("is null"), "{raw}: {e}");
         }

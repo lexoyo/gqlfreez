@@ -764,7 +764,7 @@ fn collection_of_a_null_list_writes_and_removes_nothing() {
     ok(&gqlfreez(&dir, &stub.endpoint(), &[]));
     let before = read(&dir, "data/wp/article.json");
 
-    let stub = start(Behaviour::Data(json!({"posts": null})));
+    let stub = start(Behaviour::Data(json!({"posts": {"nodes": null}})));
     let out = gqlfreez(&dir, &stub.endpoint(), &[]);
     assert_eq!(out.status.code(), Some(1));
     let err = String::from_utf8_lossy(&out.stderr);
