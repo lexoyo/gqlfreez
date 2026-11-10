@@ -280,28 +280,12 @@ fn confine(base: &Path, dir: &str, root: &Path) -> Result<PathBuf, String> {
         ));
     }
     let resolved = normalize(&base.join(requested));
-    let outside = || {
-        format!(
+    if !resolved.starts_with(root) {
+        return Err(format!(
             "dir {dir:?} resolves to {}, outside {}",
             resolved.display(),
             root.display()
-        )
-    };
-    if !resolved.starts_with(root) {
-        return Err(outside());
-    }
-    // A symbolic link on the way could still point outside.
-    let mut existing = resolved.as_path();
-    while !existing.exists() {
-        match existing.parent() {
-            Some(p) => existing = p,
-            None => break,
-        }
-    }
-    if let Ok(real) = existing.canonicalize() {
-        if !real.starts_with(root) {
-            return Err(outside());
-        }
+        ));
     }
     Ok(resolved)
 }
@@ -572,10 +556,6 @@ fn without_nulls(value: Value) -> Value {
 
 /// Every string quoted: Jekyll reads YAML 1.1, where `NO` or `on` are booleans.
 fn yaml(front_matter: &Value) -> Result<String, String> {
-    // The serializer writes `{}` for an empty map, TOML writes nothing: keep both empty.
-    if front_matter.as_object().is_some_and(Map::is_empty) {
-        return Ok(String::new());
-    }
     serde_saphyr::to_string_with_options(
         front_matter,
         serde_saphyr::ser_options! { quote_all: true },
@@ -584,26 +564,10 @@ fn yaml(front_matter: &Value) -> Result<String, String> {
 }
 
 fn check_file_name(name: &str) -> Result<(), String> {
-    const RESERVED: &[&str] = &[
-        "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
-        "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
-    ];
-    let bad = |why: &str| Err(format!("file name {name:?} {why}"));
-    if name.is_empty() || name == "." || name == ".." {
-        return bad("is empty or a dot");
-    }
-    if let Some(c) = name
-        .chars()
-        .find(|c| c.is_control() || r#"/\:*?"<>|"#.contains(*c))
-    {
-        return bad(&format!("holds {c:?}, which is not allowed in a file name"));
-    }
-    if name.ends_with('.') || name.ends_with(' ') {
-        return bad("ends with a dot or a space, which Windows drops");
-    }
-    let base = name.split('.').next().unwrap_or_default().to_lowercase();
-    if RESERVED.contains(&base.as_str()) {
-        return bad("is reserved on Windows");
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\']) {
+        return Err(format!(
+            "file name {name:?} is not the name of a single file"
+        ));
     }
     Ok(())
 }
@@ -687,12 +651,6 @@ impl Collection {
         for (name, content) in pages {
             let path = self.dir.join(&name);
             if let Some(entry) = existing.get(&name.to_lowercase()) {
-                if let Some(kind) = entry.not_a_file {
-                    return Err(fail(format!(
-                        "{} is {kind}, it is left alone and nothing is written",
-                        entry.path.display()
-                    )));
-                }
                 if entry.owner.as_ref() != Some(&self.owner) {
                     return Err(fail(format!(
                         "{} exists and was not generated from this query, it is left alone \
@@ -735,57 +693,12 @@ impl Collection {
             }
         };
         for entry in entries.flatten() {
-            // Not swept in --check and --dry-run, a temporary must not count as a page.
-            if entry.file_name().to_string_lossy().ends_with(TEMP_SUFFIX) {
-                continue;
-            }
-            let Ok(kind) = entry.file_type() else {
-                continue;
-            };
-            let not_a_file = if kind.is_symlink() {
-                Some("a symbolic link")
-            } else if kind.is_dir() {
-                Some("a directory")
-            } else if kind.is_file() {
-                None
-            } else {
-                Some("not a regular file")
-            };
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().into_owned();
-            let owner = match not_a_file {
-                None => read_marker(&path),
-                Some(_) => None,
-            };
-            found.insert(
-                name.to_lowercase(),
-                Existing {
-                    path,
-                    name,
-                    owner,
-                    not_a_file,
-                },
-            );
+            let owner = read_marker(&path);
+            found.insert(name.to_lowercase(), Existing { path, name, owner });
         }
         Ok(found)
-    }
-
-    /// Remove the temporary pages an interrupted run left in `dir`. Only files that carry
-    /// the gqlfreez marker: the suffix alone does not prove a file is ours.
-    pub fn sweep_temporaries(&self) {
-        let Ok(entries) = std::fs::read_dir(&self.dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let is_temp = entry.file_name().to_string_lossy().ends_with(TEMP_SUFFIX);
-            if is_temp
-                && entry.file_type().is_ok_and(|t| t.is_file())
-                && read_marker(&path).is_some()
-            {
-                let _ = std::fs::remove_file(path);
-            }
-        }
     }
 }
 
@@ -793,8 +706,6 @@ struct Existing {
     path: PathBuf,
     name: String,
     owner: Option<String>,
-    /// What the entry is when it is not a regular file: a page cannot replace it.
-    not_a_file: Option<&'static str>,
 }
 
 fn marker(owner: &str) -> String {
@@ -807,7 +718,7 @@ fn read_marker(path: &Path) -> Option<String> {
     let file = std::fs::File::open(path).ok()?;
     let mut lines = BufReader::new(file.take(4096)).lines();
     let fence = lines.next()?.ok()?;
-    let fence = fence.trim_start_matches('\u{feff}').trim_end();
+    let fence = fence.trim_end();
     if fence != "+++" && fence != "---" {
         return None;
     }
@@ -834,37 +745,20 @@ fn temp_for(path: &Path) -> PathBuf {
 /// Write the temporary file of every page of every plan, or none: a full disk or a
 /// permission problem leaves the pages as they were. Errors carry the index of the plan.
 pub fn stage(plans: &[(usize, &Plan)]) -> Result<(), (usize, Error)> {
-    let mut created: Vec<PathBuf> = vec![];
     for (n, (index, plan)) in plans.iter().enumerate() {
         for (path, content) in &plan.writes {
             let result = path
                 .parent()
-                .map_or(Ok(()), |dir| create_dirs(dir, &mut created))
+                .map_or(Ok(()), std::fs::create_dir_all)
                 .and_then(|_| std::fs::write(temp_for(path), content));
             if let Err(source) = result {
                 discard(&plans[..=n]);
-                created.sort_by_key(|d| std::cmp::Reverse(d.components().count()));
-                for dir in &created {
-                    let _ = std::fs::remove_dir(dir);
-                }
                 let path = path.clone();
                 return Err((*index, Error::Io { path, source }));
             }
         }
     }
     Ok(())
-}
-
-/// `create_dir_all`, noting in `created` the directories that did not exist before.
-fn create_dirs(dir: &Path, created: &mut Vec<PathBuf>) -> std::io::Result<()> {
-    let missing: Vec<PathBuf> = dir
-        .ancestors()
-        .take_while(|d| !d.as_os_str().is_empty() && !d.exists())
-        .map(Path::to_owned)
-        .collect();
-    let result = std::fs::create_dir_all(dir);
-    created.extend(missing.into_iter().filter(|d| d.is_dir()));
-    result
 }
 
 pub fn discard(plans: &[(usize, &Plan)]) {
@@ -1047,7 +941,6 @@ mod tests {
     #[test]
     fn yaml_front_matter_quotes_every_string() {
         let cases = [
-            (json!({}), ""),
             (json!({"code": "NO"}), "code: 'NO'\n"),
             (json!({"on": "x"}), "\"on\": 'x'\n"),
             (json!({"date": "2024-01-01"}), "date: '2024-01-01'\n"),
@@ -1084,7 +977,7 @@ mod tests {
 
     #[test]
     fn unsafe_file_names_are_refused() {
-        for bad in ["a/b.md", "..", "a\\b", "con.md", "x.", "a:b", "tab\t"] {
+        for bad in ["a/b.md", "..", "a\\b", ""] {
             assert!(check_file_name(bad).is_err(), "{bad}");
         }
         assert!(check_file_name("hello-world.md").is_ok());
@@ -1103,26 +996,6 @@ mod tests {
             relative(Path::new("/s/data"), Path::new("/s/data/a.graphql")),
             "a.graphql"
         );
-    }
-
-    #[test]
-    fn a_failed_stage_removes_the_directories_it_created() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("target/tmp")
-            .join("gqlfreez-test-stage-dirs");
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("kept")).unwrap();
-        std::fs::write(root.join("file"), "").unwrap();
-        let plan = Plan {
-            writes: vec![
-                (root.join("kept/new/deeper/a.md"), "a".into()),
-                (root.join("file/b.md"), "b".into()),
-            ],
-            ..Plan::default()
-        };
-        assert!(stage(&[(0, &plan)]).is_err());
-        assert!(root.join("kept").is_dir(), "it existed before");
-        assert!(!root.join("kept/new").exists());
     }
 
     #[test]

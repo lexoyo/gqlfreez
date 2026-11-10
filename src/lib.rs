@@ -91,9 +91,6 @@ pub async fn run(options: &Options) -> Result<Vec<FileResult>, Error> {
     let targets = endpoint::resolve(&queries, &configs, options, &root)?;
     if !options.check && !options.dry_run {
         output::sweep_temporaries(&queries.iter().map(|q| q.output.clone()).collect::<Vec<_>>());
-        for collection in collections.iter().flatten() {
-            collection.sweep_temporaries();
-        }
     }
 
     options.logger.status(&format!(
