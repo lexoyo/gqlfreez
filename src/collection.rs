@@ -539,39 +539,37 @@ impl Collection {
 
     /// The name and content of the page of every item in the list.
     fn pages(&self, data: &Value, logger: &Logger) -> Result<Vec<(String, String)>, Error> {
-        let fail = |message: String| self.error(message);
         let items: &[Value] = match lookup(data, &self.list) {
             Some(Value::Array(items)) => items,
             // Planning zero pages would delete every page of this query.
             Some(Value::Null) => {
-                return Err(fail(format!(
+                return Err(self.error(format!(
                     "list: {} is null in the result of {}, nothing is written or removed",
                     self.list,
                     self.query.display()
                 )))
             }
-            Some(_) => return Err(fail(format!("list: {} is not a list", self.list))),
-            None => return Err(fail(format!("list: no {} in the result", self.list))),
+            Some(_) => return Err(self.error(format!("list: {} is not a list", self.list))),
+            None => return Err(self.error(format!("list: no {} in the result", self.list))),
         };
 
         let mut pages: Vec<(String, String)> = vec![];
         let mut by_name: HashMap<String, usize> = HashMap::new();
         for (index, item) in items.iter().enumerate() {
             if item.is_null() {
-                logger.warn(&format!(
-                    "{}: collection {}: item {index} of {} is null, skipped",
-                    self.origin.display(),
-                    self.key,
-                    self.list
-                ));
+                logger.warn(
+                    &self
+                        .error(format!("item {index} of {} is null, skipped", self.list))
+                        .to_string(),
+                );
                 continue;
             }
             let (name, content) = self
                 .render(item, index)
-                .map_err(|e| fail(format!("item {index}: {e}")))?;
+                .map_err(|e| self.error(format!("item {index}: {e}")))?;
             // Case-insensitive, as on macOS and Windows.
             if let Some(first) = by_name.insert(name.to_lowercase(), index) {
-                return Err(fail(format!(
+                return Err(self.error(format!(
                     "items {first} and {index} both give the file {name:?}"
                 )));
             }
