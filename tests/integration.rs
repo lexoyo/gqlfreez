@@ -633,7 +633,7 @@ fn split_cannot_write_outside_the_root() {
     let dir = site("split-outside", companion);
     let stub = start(Behaviour::Data(posts(&["hello"])));
     let out = gqlfreez(&dir, &stub.endpoint(), &[]);
-    assert!(!out.status.success());
+    assert_eq!(out.status.code(), Some(2), "a configuration problem");
     assert!(String::from_utf8_lossy(&out.stderr).contains("outside"));
     assert_eq!(
         stub.calls.load(Ordering::SeqCst),
@@ -653,7 +653,7 @@ fn split_companion_typo_is_refused_before_any_request() {
     let dir = site("split-typo", companion);
     let stub = start(Behaviour::Data(posts(&["hello"])));
     let out = gqlfreez(&dir, &stub.endpoint(), &[]);
-    assert!(!out.status.success());
+    assert_eq!(out.status.code(), Some(2), "a configuration problem");
     assert!(String::from_utf8_lossy(&out.stderr).contains("frontmatter"));
     assert_eq!(stub.calls.load(Ordering::SeqCst), 0);
 }

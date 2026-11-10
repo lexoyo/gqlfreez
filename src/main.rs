@@ -134,7 +134,9 @@ async fn main() -> ExitCode {
         Err(e) => {
             eprintln!("gqlfreez: {e}");
             return ExitCode::from(match e {
-                Error::Config(_) | Error::NoQueries { .. } => exit::CONFIG,
+                // A `Split` error returned here comes from loading a companion file, before
+                // any request; one found while splitting a result is a failed file instead.
+                Error::Config(_) | Error::NoQueries { .. } | Error::Split { .. } => exit::CONFIG,
                 _ => exit::FAILED,
             });
         }
