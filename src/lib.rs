@@ -309,31 +309,28 @@ fn commit(results: &mut [FileResult], plans: &[Option<collection::Plan>], option
         }
         return;
     }
-    for (i, path, page) in &pages {
-        if let Err(e) = output::write_temp(path, page) {
-            results[*i].outcome = Outcome::Failed(e);
-            discard(results);
-            nothing_written(results);
-            return;
+    let mut place = || -> Result<(), (usize, Error, bool)> {
+        for (i, path, page) in &pages {
+            output::write_temp(path, page).map_err(|e| (*i, e, true))?;
         }
-    }
-    for r in results.iter_mut() {
-        if matches!(r.outcome, Outcome::Frozen { .. }) {
-            if let Err(e) = output::commit(&r.output) {
-                r.outcome = Outcome::Failed(e);
+        for r in results.iter_mut() {
+            if matches!(r.outcome, Outcome::Frozen { .. }) {
+                if let Err(e) = output::commit(&r.output) {
+                    r.outcome = Outcome::Failed(e);
+                }
             }
         }
-    }
-    if let Err((i, e)) = collection::remove_stale(&with_plans) {
+        collection::remove_stale(&with_plans).map_err(|(i, e)| (i, e, false))?;
+        for (i, path, _) in &pages {
+            output::commit(path).map_err(|e| (*i, e, false))?;
+        }
+        Ok(())
+    };
+    if let Err((i, e, before_any_write)) = place() {
         results[i].outcome = Outcome::Failed(e);
         discard(results);
-        return;
-    }
-    for (i, path, _) in &pages {
-        if let Err(e) = output::commit(path) {
-            results[*i].outcome = Outcome::Failed(e);
-            discard(results);
-            return;
+        if before_any_write {
+            nothing_written(results);
         }
     }
 }
