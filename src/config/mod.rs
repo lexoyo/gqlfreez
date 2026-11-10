@@ -38,6 +38,9 @@ pub const UNSUPPORTED_PLACES: &[&str] = &[
     ".graphqlrc.cjs",
 ];
 
+/// Read up to 0.1.0: ignoring them now would send the queries to a config further up.
+const TOML_PLACES: &[&str] = &[".graphqlrc.toml", "graphql.config.toml"];
+
 #[derive(Debug, Default, Deserialize)]
 pub struct GraphqlConfig {
     pub schema: Option<Schema>,
@@ -170,6 +173,15 @@ fn file_in(current: &Path) -> Result<Option<PathBuf>, Error> {
     }
     if let Some(path) = found.into_iter().next() {
         return Ok(Some(path));
+    }
+
+    if let Some(name) = TOML_PLACES.iter().find(|n| current.join(n).is_file()) {
+        return Err(Error::Config(format!(
+            "found {name} in {}: TOML configs are no longer supported.\n\
+             Convert it to YAML or JSON: {}.",
+            current.display(),
+            SEARCH_PLACES.join(", ")
+        )));
     }
 
     let unsupported: Vec<String> = UNSUPPORTED_PLACES

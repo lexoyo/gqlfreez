@@ -1009,6 +1009,27 @@ fn a_config_above_the_root_still_applies_when_nothing_is_closer() {
 }
 
 #[test]
+fn a_toml_config_is_refused_instead_of_using_the_one_above() {
+    let dir = scratch("sources-toml");
+    let stub = start(Behaviour::Simple);
+    graphqlrc(&dir, ".graphqlrc.yml", &stub.endpoint(), "project");
+    write(&dir, "src/.graphqlrc.toml", "[extensions]\n");
+    write(
+        &dir,
+        "src/posts.graphql",
+        "{ posts(first: 1) { nodes { title } } }",
+    );
+
+    let (status, err) = code(&gqlfreez_from_configs(&dir.join("src"), &[]));
+    assert_eq!(status, Some(2), "{err}");
+    assert!(
+        err.contains(".graphqlrc.toml") && err.contains("YAML or JSON"),
+        "{err}"
+    );
+    assert_eq!(stub.calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
 fn the_endpoint_flag_wins_over_every_config() {
     let (dir, wp, shop) = two_sources("sources-flag");
     let forced = start(Behaviour::Data(posts(&["forced"])));
