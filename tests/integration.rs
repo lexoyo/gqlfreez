@@ -405,7 +405,11 @@ fn no_matching_file_is_an_error() {
     let stub = start(Behaviour::Simple);
     let out = gqlfreez(&dir, &stub.endpoint(), &[]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("no query file"));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("gqlfreez: config: no query file under "),
+        "{stderr}"
+    );
 }
 
 // Split: one file per item of a list.

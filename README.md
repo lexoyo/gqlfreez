@@ -224,6 +224,9 @@ hosting cannot take more; `--delay` waits between two paginated requests.
 Exit codes: `0` all good, `1` a query failed, `2` a configuration problem, `3` `--check`
 found a file out of date.
 
+Finding no query file at all is a configuration problem for the CLI. Used as a library,
+`run` returns `Error::NoQueries`, so an empty site can be told apart from a broken setup.
+
 ## What it does not do yet
 
 **Queries cannot take parameters yet.** For one page per item, use

@@ -88,11 +88,10 @@ pub async fn run(options: &Options) -> Result<Vec<FileResult>, Error> {
         });
     }
     if queries.is_empty() {
-        return Err(Error::Config(format!(
-            "no query file under {} matching {:?}",
-            options.root.display(),
-            options.glob
-        )));
+        return Err(Error::NoQueries {
+            root: options.root.clone(),
+            glob: options.glob.clone(),
+        });
     }
     let targets = endpoint::resolve(&queries, options, &root)?;
     output::sweep_temporaries(&queries.iter().map(|q| q.output.clone()).collect::<Vec<_>>());
@@ -305,5 +304,51 @@ fn commit(results: &mut [FileResult], plans: &[Option<split::Plan>], options: &O
     }
     if let Err((i, e)) = split::finish(&with_plans) {
         results[i].outcome = Outcome::Failed(e);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use options::defaults;
+
+    #[tokio::test]
+    async fn an_empty_root_is_a_typed_error() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target/tmp/gqlfreez-test-no-queries");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let options = Options {
+            root: root.clone(),
+            glob: defaults::GLOB.into(),
+            endpoint: Some("http://127.0.0.1:9/graphql".into()),
+            headers: vec![],
+            concurrency: defaults::CONCURRENCY,
+            page_size: defaults::PAGE_SIZE,
+            retries: defaults::RETRIES,
+            delay: defaults::DELAY,
+            connect_timeout: defaults::CONNECT_TIMEOUT,
+            request_timeout: defaults::REQUEST_TIMEOUT,
+            file_timeout: defaults::FILE_TIMEOUT,
+            max_pages: defaults::MAX_PAGES,
+            max_response_bytes: defaults::MAX_RESPONSE_BYTES,
+            allow_partial: false,
+            envelope: false,
+            check: false,
+            dry_run: false,
+            logger: Logger::new(Level::Silent, false),
+        };
+        let err = run(&options).await.unwrap_err();
+        assert!(
+            matches!(&err, Error::NoQueries { root: r, glob } if *r == root && glob == defaults::GLOB)
+        );
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "config: no query file under {} matching {:?}",
+                root.display(),
+                defaults::GLOB
+            )
+        );
     }
 }

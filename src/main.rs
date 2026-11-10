@@ -134,7 +134,7 @@ async fn main() -> ExitCode {
         Err(e) => {
             eprintln!("gqlfreez: {e}");
             return ExitCode::from(match e {
-                Error::Config(_) => exit::CONFIG,
+                Error::Config(_) | Error::NoQueries { .. } => exit::CONFIG,
                 _ => exit::FAILED,
             });
         }

@@ -28,6 +28,11 @@ pub enum Error {
 
     #[error("config: {0}")]
     Config(String),
+
+    /// Nothing under `root` matches `glob`. Kept apart from `Config` so a caller can treat an
+    /// empty site as "nothing to freeze" rather than as a failure.
+    #[error("config: no query file under {} matching {glob:?}", root.display())]
+    NoQueries { root: PathBuf, glob: String },
 }
 
 /// A transient failure worth retrying (rate limit, timeout, 5xx).
