@@ -106,7 +106,7 @@ title = "Hello world"
 +++
 ```
 
-- **Each key names a query of this config.** A key that names no `.graphql` or `.gql` file, or a query that uses a closer config, is a configuration error. So is an unknown setting. The same entries work in a JSON or TOML config file.
+- **One entry per query.** The key is the path of the query file, from the folder of the config file. If the key matches no query file, or if the query has another config file closer to it, `gqlfreez` stops with a configuration error. An unknown setting is an error too. In a JSON or TOML config file, the entries are the same.
 - **Slots use the [Mustache](https://mustache.github.io/) syntax** and are rendered by [Handlebars](https://handlebarsjs.com/). `{{item.slug}}` or `{{item.author.name}}` inserts a field of the item, `{{item}}` the whole item, and `{{index}}` its position in the list, starting at 0. A number selects a list element: `{{item.nodes.0.title}}`. Write `\{{` for literal braces; in YAML and TOML, put that string between single quotes, which keep the backslash.
 - **A string that is a single slot keeps the type of the value**, an object or a number for example. In any other string, the value is converted to text.
 - **The run fails** if two items produce the same file name, ignoring case, or if the list itself is `null` (for example in a partial result with `--allow-partial`): nothing is written or deleted then.
