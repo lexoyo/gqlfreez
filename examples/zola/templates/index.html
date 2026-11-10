@@ -5,7 +5,7 @@
   <body>
     <h1>{{ data.countries | length }} countries</h1>
     <ul>
-      {% for country in data.countries | slice(end=20) %}
+      {% for country in data.countries[:20] %}
         <li><a href="{{ get_url(path="@/countries/" ~ country.code ~ ".md") }}">{{ country.emoji }} {{ country.name }}</a> — {{ country.continent.name }}</li>
       {% endfor %}
     </ul>
