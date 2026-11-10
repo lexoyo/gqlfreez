@@ -186,9 +186,8 @@ fn load(
     query: &Query,
     root: &Path,
 ) -> Result<Collection, Error> {
-    let fail = |message: String| Error::Collection {
-        path: origin.to_owned(),
-        message: format!("collection {key}: {message}"),
+    let fail = |message: String| {
+        Error::Config(format!("{}: collection {key}: {message}", origin.display()))
     };
     let mut templates = registry();
     let file =

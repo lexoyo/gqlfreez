@@ -22,7 +22,7 @@ pub enum Error {
     #[error("{path}: {message}")]
     GraphQl { path: PathBuf, message: String },
 
-    /// A collection that cannot be applied: its own settings, or the result it reads.
+    /// A collection that cannot be applied to the result it reads.
     #[error("{path}: {message}")]
     Collection { path: PathBuf, message: String },
 

@@ -134,11 +134,7 @@ async fn main() -> ExitCode {
         Err(e) => {
             eprintln!("gqlfreez: {e}");
             return ExitCode::from(match e {
-                // A `Collection` error returned here comes from loading a collection, before
-                // any request; one found while reading a result is a failed file instead.
-                Error::Config(_) | Error::NoQueries { .. } | Error::Collection { .. } => {
-                    exit::CONFIG
-                }
+                Error::Config(_) | Error::NoQueries { .. } => exit::CONFIG,
                 _ => exit::FAILED,
             });
         }
