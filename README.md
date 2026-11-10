@@ -105,8 +105,8 @@ extra:
 ---
 ```
 
-- **One entry per query.** The key is the path of the query file, from the folder of the config file. `gqlfreez` stops with a configuration error if the key matches no query file that it finds, or if the entry is in a config that is not the nearest one to the query. An unknown setting is an error too. JSON and TOML configs use the same keys.
-- **Values are inserted with [Mustache](https://mustache.github.io/) tags**, written `{{ }}` and rendered by [Handlebars](https://handlebarsjs.com/). `{{item.slug}}` inserts a field of the item, `{{item}}` the whole item, and `{{index}}` its position in the list, starting at 0. A number selects a list element: `{{item.nodes.0.title}}`. For literal braces, write `\{{`. In YAML and TOML, put that string between single quotes, so that the backslash is kept.
+- **One entry per query.** The key is the path of the query file, from the folder of the config file. `gqlfreez` stops with a configuration error if the key matches no query file that it finds, or if the entry is in a config that is not the nearest one to the query. An unknown setting is an error too. JSON configs use the same keys.
+- **Values are inserted with [Mustache](https://mustache.github.io/) tags**, written `{{ }}` and rendered by [Handlebars](https://handlebarsjs.com/). `{{item.slug}}` inserts a field of the item, `{{item}}` the whole item, and `{{index}}` its position in the list, starting at 0. A number selects a list element: `{{item.nodes.0.title}}`. For literal braces, write `\{{`. In YAML, put that string between single quotes, so that the backslash is kept.
 - **A string made of a single tag keeps the type of the value**, an object or a number for example. In any other string, the value is converted to text.
 - **The run fails** if two items produce the same file name, ignoring case, or if the list itself is `null`: nothing is written or deleted then. A `null` list can happen with `--allow-partial`, which keeps the data when the server also returns errors.
 - **Null values are removed everywhere in the front matter**, also inside lists (the list gets shorter). Zola converts a YAML front matter to TOML, which has no null. All strings are quoted, so Jekyll reads `NO`, `on` or `1.0` as text.
@@ -119,7 +119,7 @@ The [Zola example](./examples/zola) uses this to write one page per country.
 
 ## Configuration
 
-`gqlfreez` reads your existing [graphql-config](https://the-guild.dev/graphql/config/docs). Declarative formats only (`.graphqlrc`, `.graphqlrc.{yml,yaml,json,toml}`, `graphql.config.*`) — a binary cannot run a `.js` / `.ts` config file.
+`gqlfreez` reads your existing [graphql-config](https://the-guild.dev/graphql/config/docs). Declarative formats only (`.graphqlrc`, `.graphqlrc.{yml,yaml,json}`, `graphql.config.{yml,yaml,json}`) — a binary cannot run a `.js` / `.ts` config file.
 
 ```yaml
 schema:
