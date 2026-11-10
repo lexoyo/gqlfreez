@@ -240,23 +240,33 @@ fn datetimes_as_strings(value: toml::Value) -> toml::Value {
     }
 }
 
-/// A single project (or one named `default`) is accepted; several are not.
+/// A single project (or one named `default`) is accepted; several are not. The extensions
+/// written next to `projects` apply to it, the project's own winning.
 fn flatten_projects(cfg: GraphqlConfig, path: &Path) -> Result<GraphqlConfig, Error> {
     let Some(mut projects) = cfg.projects else {
         return Ok(cfg);
     };
-    if projects.len() == 1 {
-        return Ok(*projects.into_values().next().unwrap());
+    let mut project = if projects.len() == 1 {
+        projects.into_values().next().unwrap()
+    } else if let Some(default) = projects.remove("default") {
+        default
+    } else {
+        return Err(Error::Config(format!(
+            "{}: multi-project configs are not supported yet ({} projects). \
+             Keep a single project.",
+            path.display(),
+            projects.len()
+        )));
+    };
+    let extensions = &mut project.extensions;
+    // Endpoints are not merged one by one: a root `default` would win over the project's.
+    if extensions.endpoints.is_empty() {
+        extensions.endpoints = cfg.extensions.endpoints;
     }
-    if let Some(default) = projects.remove("default") {
-        return Ok(*default);
+    for (key, collection) in cfg.extensions.collections {
+        extensions.collections.entry(key).or_insert(collection);
     }
-    Err(Error::Config(format!(
-        "{}: multi-project configs are not supported yet ({} projects). \
-         Keep a single project.",
-        path.display(),
-        projects.len()
-    )))
+    Ok(*project)
 }
 
 fn resolve(cfg: GraphqlConfig, path: &Path) -> Resolved {
@@ -419,6 +429,27 @@ mod tests {
             r.endpoint.as_deref(),
             Some("https://from-endpoints/graphql")
         );
+    }
+
+    #[test]
+    fn root_extensions_apply_to_the_single_project_which_wins() {
+        let yaml = "projects:\n\
+                    \x20 site:\n\
+                    \x20   extensions:\n\
+                    \x20     collections:\n\
+                    \x20       a.graphql: {list: a, dir: c, file: x.md, frontMatter: {}}\n\
+                    extensions:\n\
+                    \x20 endpoints:\n\
+                    \x20   default: https://root/graphql\n\
+                    \x20 collections:\n\
+                    \x20   a.graphql: {list: root, dir: c, file: x.md, frontMatter: {}}\n\
+                    \x20   b.graphql: {list: b, dir: c, file: x.md, frontMatter: {}}\n";
+        let p = Path::new("c.yml");
+        let cfg = flatten_projects(serde_yaml_ng::from_str(yaml).unwrap(), p).unwrap();
+        let r = resolve(cfg, p);
+        assert_eq!(r.endpoint.as_deref(), Some("https://root/graphql"));
+        assert_eq!(r.collections["a.graphql"].list, "a");
+        assert_eq!(r.collections["b.graphql"].list, "b");
     }
 
     #[test]
