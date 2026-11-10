@@ -43,7 +43,7 @@ pub struct Collection {
     file: Template,
     format: Format,
     front_matter: Vec<(String, Shape)>,
-    templates: Templates,
+    templates: Handlebars<'static>,
     /// The query, relative to `dir`: what the marker of every generated file says.
     owner: String,
 }
@@ -190,7 +190,7 @@ fn load(
         path: origin.to_owned(),
         message: format!("collection {key}: {message}"),
     };
-    let mut templates = Templates::new();
+    let mut templates = registry();
     let file =
         Template::parse(&raw.file, &mut templates).map_err(|e| fail(format!("file: {e}")))?;
     let Value::Object(front_matter) = raw.front_matter.clone() else {
@@ -280,16 +280,11 @@ fn lookup<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
 }
 
 /// The slots, compiled once per collection. Rendered with `{ "item": …, "index": … }`.
-#[derive(Debug)]
-struct Templates(Handlebars<'static>);
-
-impl Templates {
-    fn new() -> Self {
-        let mut registry = Handlebars::new();
-        registry.register_escape_fn(handlebars::no_escape);
-        registry.set_strict_mode(true);
-        Templates(registry)
-    }
+fn registry() -> Handlebars<'static> {
+    let mut registry = Handlebars::new();
+    registry.register_escape_fn(handlebars::no_escape);
+    registry.set_strict_mode(true);
+    registry
 }
 
 /// A slot that is a plain path, like `{{item.author.name}}`.
@@ -311,27 +306,27 @@ struct Template {
 }
 
 impl Template {
-    fn parse(raw: &str, templates: &mut Templates) -> Result<Self, String> {
+    fn parse(raw: &str, templates: &mut Handlebars<'static>) -> Result<Self, String> {
         let compiled = handlebars::Template::compile(raw).map_err(|e| format!("{raw:?}: {e}"))?;
         let slots: Vec<Slot> = compiled.elements.iter().filter_map(slot).collect();
         let lone = match compiled.elements.as_slice() {
             [element] => slot(element),
             _ => None,
         };
-        let name = templates.0.get_templates().len().to_string();
-        templates.0.register_template(&name, compiled);
+        let name = templates.get_templates().len().to_string();
+        templates.register_template(&name, compiled);
         Ok(Template { name, lone, slots })
     }
 
     /// A string that is a single slot keeps the type of the value it points to.
-    fn typed(&self, templates: &Templates, context: &Context) -> Result<Value, String> {
+    fn typed(&self, templates: &Handlebars<'static>, context: &Context) -> Result<Value, String> {
         match &self.lone {
             Some(slot) => field(context.data(), slot).map(output::sorted),
             None => self.text(templates, context).map(Value::String),
         }
     }
 
-    fn text(&self, templates: &Templates, context: &Context) -> Result<String, String> {
+    fn text(&self, templates: &Handlebars<'static>, context: &Context) -> Result<String, String> {
         for slot in &self.slots {
             if let Value::Object(_) | Value::Array(_) = field(context.data(), slot)? {
                 return Err(format!(
@@ -341,7 +336,6 @@ impl Template {
             }
         }
         templates
-            .0
             .render_with_context(&self.name, context)
             .map_err(|e| e.reason().to_string())
     }
@@ -391,7 +385,7 @@ enum Shape {
 }
 
 impl Shape {
-    fn parse(value: Value, templates: &mut Templates) -> Result<Self, String> {
+    fn parse(value: Value, templates: &mut Handlebars<'static>) -> Result<Self, String> {
         Ok(match value {
             Value::String(s) => Shape::Template(Template::parse(&s, templates)?),
             Value::Object(map) => Shape::Object(
@@ -409,7 +403,7 @@ impl Shape {
         })
     }
 
-    fn fill(&self, templates: &Templates, context: &Context) -> Result<Value, String> {
+    fn fill(&self, templates: &Handlebars<'static>, context: &Context) -> Result<Value, String> {
         Ok(match self {
             Shape::Literal(v) => v.clone(),
             Shape::Template(t) => t.typed(templates, context)?,
@@ -426,7 +420,7 @@ impl Shape {
 
 fn fill_entries(
     entries: &[(String, Shape)],
-    templates: &Templates,
+    templates: &Handlebars<'static>,
     context: &Context,
 ) -> Result<Map<String, Value>, String> {
     entries
@@ -671,14 +665,14 @@ mod tests {
     }
 
     fn typed(raw: &str, item: Value, index: usize) -> Result<Value, String> {
-        let mut templates = Templates::new();
+        let mut templates = registry();
         let t = Template::parse(raw, &mut templates).unwrap();
         t.typed(&templates, &context(item, index))
     }
 
     #[test]
     fn slots_are_plain_paths_whatever_the_spacing() {
-        let mut templates = Templates::new();
+        let mut templates = registry();
         let t = Template::parse("{{ item.author.name }}", &mut templates).unwrap();
         assert_eq!(
             t.lone,
