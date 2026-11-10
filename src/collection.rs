@@ -434,7 +434,7 @@ impl Template {
         let compiled = handlebars::Template::compile(raw).map_err(|e| format!("{raw:?}: {e}"))?;
         let slots: Vec<Slot> = compiled.elements.iter().filter_map(slot).collect();
         let lone = match compiled.elements.as_slice() {
-            [element @ TemplateElement::Expression(_)] => slot(element),
+            [element] => slot(element),
             _ => None,
         };
         let name = templates.0.get_templates().len().to_string();
@@ -1043,6 +1043,16 @@ mod tests {
             "item keys are sorted"
         );
         assert!(typed("x{{item.author}}", item, 0).is_err());
+    }
+
+    #[test]
+    fn a_lone_triple_mustache_slot_keeps_its_type_too() {
+        let item = json!({"n": 3, "author": {"name": "Ada"}});
+        assert_eq!(typed("{{{item.n}}}", item.clone(), 0).unwrap(), json!(3));
+        assert_eq!(
+            typed("{{{item.author}}}", item, 0).unwrap(),
+            json!({"name": "Ada"})
+        );
     }
 
     #[test]
