@@ -113,9 +113,15 @@ pub fn resolve(
             if canonical.as_ref().is_some_and(|p| !p.starts_with(root)) {
                 continue;
             }
-            let Some(i) = canonical.and_then(|p| by_source.get(p.as_path()).copied()) else {
+            let Some(canonical) = canonical else {
                 return Err(fail(format!(
-                    "names no query file found by this run at {}",
+                    "points to {}, which does not exist",
+                    path.display()
+                )));
+            };
+            let Some(&i) = by_source.get(canonical.as_path()) else {
+                return Err(fail(format!(
+                    "points to {}, which is not one of the query files being frozen",
                     path.display()
                 )));
             };

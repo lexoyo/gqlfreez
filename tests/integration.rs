@@ -805,7 +805,7 @@ fn a_collection_key_with_no_query_is_refused_before_any_request() {
     let (status, err) = code(&gqlfreez(&dir, &stub.endpoint(), &[]));
     assert_eq!(status, Some(2), "{err}");
     assert!(
-        err.contains(".graphqlrc.json") && err.contains("\"gone.graphql\" names no query file"),
+        err.contains(".graphqlrc.json") && err.contains("\"gone.graphql\" points to"),
         "{err}"
     );
     assert_eq!(stub.calls.load(Ordering::SeqCst), 0);
@@ -855,10 +855,7 @@ fn a_collection_key_in_a_config_no_query_uses_is_still_checked() {
     let stub = start(Behaviour::Data(posts(&["hello"])));
     let (status, err) = code(&gqlfreez(&dir, &stub.endpoint(), &[]));
     assert_eq!(status, Some(2), "{err}");
-    assert!(
-        err.contains("\"typo.graphql\" names no query file"),
-        "{err}"
-    );
+    assert!(err.contains("\"typo.graphql\" points to"), "{err}");
     assert_eq!(stub.calls.load(Ordering::SeqCst), 0);
 }
 
