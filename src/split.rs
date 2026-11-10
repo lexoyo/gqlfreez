@@ -55,6 +55,7 @@ impl Format {
 #[derive(Debug)]
 pub struct Split {
     companion: PathBuf,
+    query: PathBuf,
     list: Vec<String>,
     /// Absolute, normalized, checked to be under the root.
     dir: PathBuf,
@@ -137,14 +138,15 @@ pub fn load(companion: &Path, query: &Path, root: &Path) -> Result<Option<Split>
             source,
         })?;
     let dir = confine(&base, &raw.dir, root).map_err(fail)?;
-    let query = query.canonicalize().map_err(|source| Error::Io {
+    let canonical = query.canonicalize().map_err(|source| Error::Io {
         path: query.to_owned(),
         source,
     })?;
-    let owner = relative(&dir, &query);
+    let owner = relative(&dir, &canonical);
 
     Ok(Some(Split {
         companion: companion.to_owned(),
+        query: query.to_owned(),
         list,
         dir,
         file,
@@ -464,6 +466,75 @@ fn without_nulls(value: Value) -> Value {
     }
 }
 
+/// YAML written by hand rather than by serde_yaml_ng, which leaves `NO`, `on` or `y` bare:
+/// Jekyll reads YAML 1.1, where those are booleans.
+fn yaml_map(map: &Map<String, Value>, indent: usize) -> String {
+    let pad = " ".repeat(indent);
+    let mut out = String::new();
+    for (key, value) in map {
+        out.push_str(&format!("{pad}{}:", yaml_string(key)));
+        match value {
+            Value::Object(m) if !m.is_empty() => {
+                out.push('\n');
+                out.push_str(&yaml_map(m, indent + 2));
+            }
+            Value::Array(items) if !items.is_empty() => {
+                out.push('\n');
+                out.push_str(&yaml_seq(items, indent));
+            }
+            scalar => out.push_str(&format!(" {}\n", yaml_scalar(scalar))),
+        }
+    }
+    out
+}
+
+fn yaml_seq(items: &[Value], indent: usize) -> String {
+    let pad = " ".repeat(indent);
+    let mut out = String::new();
+    for item in items {
+        let nested = match item {
+            Value::Object(m) if !m.is_empty() => yaml_map(m, indent + 2),
+            Value::Array(a) if !a.is_empty() => yaml_seq(a, indent + 2),
+            scalar => {
+                out.push_str(&format!("{pad}- {}\n", yaml_scalar(scalar)));
+                continue;
+            }
+        };
+        // The first line of the nested block goes on the dash line.
+        out.push_str(&format!("{pad}- {}", &nested[indent + 2..]));
+    }
+    out
+}
+
+fn yaml_scalar(value: &Value) -> String {
+    match value {
+        Value::String(s) => yaml_string(s),
+        Value::Object(_) => "{}".into(),
+        Value::Array(_) => "[]".into(),
+        other => other.to_string(),
+    }
+}
+
+/// Bare only when no YAML 1.1 or 1.2 reader can take it for anything but a string.
+fn yaml_string(s: &str) -> String {
+    const SPECIAL: &[&str] = &[
+        "y", "n", "yes", "no", "true", "false", "on", "off", "null", "~",
+    ];
+    let mut chars = s.chars();
+    let plain = chars
+        .next()
+        .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '/')
+        && chars.all(|c| c.is_alphanumeric() || " _-./".contains(c))
+        && !s.ends_with(' ')
+        && !SPECIAL.contains(&s.to_lowercase().as_str());
+    if plain {
+        s.to_owned()
+    } else {
+        // A JSON string is a valid double-quoted YAML scalar.
+        Value::String(s.to_owned()).to_string()
+    }
+}
+
 fn check_file_name(name: &str) -> Result<(), String> {
     const RESERVED: &[&str] = &[
         "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
@@ -501,8 +572,8 @@ impl Split {
         let body = match self.format {
             Format::Toml => toml::to_string(&front_matter).map_err(|e| e.to_string())?,
             Format::Yaml => match &front_matter {
-                Value::Object(m) if m.is_empty() => String::new(),
-                _ => serde_yaml_ng::to_string(&front_matter).map_err(|e| e.to_string())?,
+                Value::Object(m) => yaml_map(m, 0),
+                _ => unreachable!("a front matter is always an object"),
             },
         };
         let fence = self.format.fence();
@@ -525,13 +596,13 @@ impl Split {
                 return Err(fail(format!("list: {} is not a list", self.list.join("."))))
             }
             Found::Missing(why) => return Err(fail(format!("list: {why}"))),
+            // Planning zero pages would delete every page of this query.
             Found::Null => {
-                logger.warn(&format!(
-                    "{}: {} is null in the result, no page written",
-                    self.companion.display(),
-                    self.list.join(".")
-                ));
-                &[]
+                return Err(fail(format!(
+                    "list: {} is null in the result of {}, nothing is written nor removed",
+                    self.list.join("."),
+                    self.query.display()
+                )))
             }
         };
 
@@ -579,6 +650,12 @@ impl Split {
         for (name, content) in pages {
             let path = self.dir.join(&name);
             if let Some(entry) = existing.get(&name.to_lowercase()) {
+                if let Some(kind) = entry.not_a_file {
+                    return Err(fail(format!(
+                        "{} is {kind}, it is left alone and nothing is written",
+                        entry.path.display()
+                    )));
+                }
                 match &entry.owner {
                     None => {
                         return Err(fail(format!(
@@ -645,15 +722,53 @@ impl Split {
             }
         };
         for entry in entries.flatten() {
-            if !entry.file_type().is_ok_and(|t| t.is_file()) {
+            let Ok(kind) = entry.file_type() else {
                 continue;
-            }
+            };
+            let not_a_file = if kind.is_symlink() {
+                Some("a symbolic link")
+            } else if kind.is_dir() {
+                Some("a directory")
+            } else if kind.is_file() {
+                None
+            } else {
+                Some("not a regular file")
+            };
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().into_owned();
-            let owner = read_marker(&path);
-            found.insert(name.to_lowercase(), Existing { path, name, owner });
+            let owner = match not_a_file {
+                None => read_marker(&path),
+                Some(_) => None,
+            };
+            found.insert(
+                name.to_lowercase(),
+                Existing {
+                    path,
+                    name,
+                    owner,
+                    not_a_file,
+                },
+            );
         }
         Ok(found)
+    }
+
+    /// Remove the temporary pages an interrupted run left in `dir`. Only files that carry
+    /// the gqlfreez marker: the suffix alone does not prove a file is ours.
+    pub fn sweep_temporaries(&self) {
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_temp = entry.file_name().to_string_lossy().ends_with(TEMP_SUFFIX);
+            if is_temp
+                && entry.file_type().is_ok_and(|t| t.is_file())
+                && read_marker(&path).is_some()
+            {
+                let _ = std::fs::remove_file(path);
+            }
+        }
     }
 }
 
@@ -661,6 +776,8 @@ struct Existing {
     path: PathBuf,
     name: String,
     owner: Option<String>,
+    /// What the entry is when it is not a regular file: a page cannot replace it.
+    not_a_file: Option<&'static str>,
 }
 
 fn marker(owner: &str) -> String {
@@ -689,9 +806,11 @@ fn same_text(path: &Path, fresh: &str) -> bool {
     std::fs::read_to_string(path).is_ok_and(|existing| existing.replace("\r\n", "\n") == fresh)
 }
 
+const TEMP_SUFFIX: &str = ".gqlfreez-tmp";
+
 fn temp_for(path: &Path) -> PathBuf {
     let mut name = path.file_name().unwrap_or_default().to_owned();
-    name.push(".gqlfreez-tmp");
+    name.push(TEMP_SUFFIX);
     path.with_file_name(name)
 }
 
@@ -838,6 +957,81 @@ mod tests {
             without_nulls(json!({"a": null, "b": [1, null, {"c": null}]})),
             json!({"b": [1, {}]})
         );
+    }
+
+    #[test]
+    fn yaml_quotes_every_string_a_yaml_1_1_reader_would_not_read_as_a_string() {
+        for bare in [
+            "NO", "no", "Yes", "on", "OFF", "y", "N", "true", "False", "~", "null",
+        ] {
+            assert_eq!(yaml_string(bare), format!("\"{bare}\""));
+        }
+        for number in [
+            "1",
+            "-2",
+            "0x1F",
+            "1e3",
+            ".5",
+            ".inf",
+            "1:20",
+            "2024-01-01",
+            "010",
+        ] {
+            assert_eq!(yaml_string(number), format!("\"{number}\""));
+        }
+        for odd in [
+            "",
+            " a",
+            "a ",
+            "a: b",
+            "a #b",
+            "#a",
+            "*a",
+            "&a",
+            "!a",
+            "@a",
+            "line\nbreak",
+        ] {
+            let quoted = yaml_string(odd);
+            assert!(quoted.starts_with('"'), "{odd:?} gave {quoted}");
+            let back: serde_yaml_ng::Value = serde_yaml_ng::from_str(&quoted).unwrap();
+            assert_eq!(back.as_str(), Some(odd));
+        }
+        assert_eq!(yaml_string("About hello"), "About hello");
+        assert_eq!(yaml_string("/blog/hello/"), "/blog/hello/");
+    }
+
+    #[test]
+    fn yaml_front_matter_nests_maps_and_lists() {
+        let value = json!({
+            "code": "NO",
+            "tags": ["a", "on"],
+            "extra": {"people": [{"name": "Ada", "age": 36}, {"name": "Bob"}], "none": {}},
+            "grid": [[1, 2], []]
+        });
+        let Value::Object(map) = value.clone() else {
+            unreachable!()
+        };
+        let text = yaml_map(&map, 0);
+        assert_eq!(
+            text,
+            "code: \"NO\"\n\
+             tags:\n\
+             - a\n\
+             - \"on\"\n\
+             extra:\n\
+             \x20 people:\n\
+             \x20 - name: Ada\n\
+             \x20   age: 36\n\
+             \x20 - name: Bob\n\
+             \x20 none: {}\n\
+             grid:\n\
+             - - 1\n\
+             \x20 - 2\n\
+             - []\n"
+        );
+        let back: Value = serde_yaml_ng::from_str(&text).unwrap();
+        assert_eq!(back, value);
     }
 
     #[test]
