@@ -215,8 +215,14 @@ fn read(path: &Path) -> Result<Resolved, Error> {
                 .map_err(|e| Error::Config(format!("{}: {e}", path.display())))?
         };
 
-    let cfg = flatten_projects(cfg, path)?;
-    Ok(resolve(cfg, path))
+    let out = resolve(flatten_projects(cfg, path)?, path);
+    match &out.endpoint {
+        Some(url) if !is_url(url) => Err(Error::Config(format!(
+            "{}: the endpoint must be an http(s) URL, got {url:?}",
+            path.display()
+        ))),
+        _ => Ok(out),
+    }
 }
 
 /// A single project (or one named `default`) is accepted; several are not.

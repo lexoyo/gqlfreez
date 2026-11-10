@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
-use crate::config::{self, Resolved};
+use crate::config::Resolved;
 use crate::discover::Query;
 use crate::errors::Error;
 use crate::options::Options;
@@ -41,12 +41,6 @@ pub fn resolve(
                 q.source.display()
             )));
         };
-        if !config::is_url(&url) {
-            return Err(Error::Config(format!(
-                "{}: the endpoint must be an http(s) URL, got {url:?}",
-                config.origin.as_deref().unwrap_or(&q.source).display()
-            )));
-        }
         options.logger.verbose(&format!(
             "{}: {url}{}",
             q.source.display(),
