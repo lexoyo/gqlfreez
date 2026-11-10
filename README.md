@@ -23,8 +23,6 @@ On macOS, replace `linux-x64` with `darwin-arm64` (Apple silicon) or `darwin-x64
 
 > `npx gqlfreez` and `cargo install gqlfreez` do **not** work yet — publishing to npm and crates.io is still on the roadmap. For now, download the binary.
 
-`gqlfreez` is also a Rust library (crate `gqlfreez`, not published yet).
-
 ## Use
 
 ```graphql

@@ -48,7 +48,7 @@ pub enum Staged {
 }
 
 /// How a file on disk is compared with what would replace it.
-pub enum Compare {
+pub(crate) enum Compare {
     Json,
     /// Line endings aside.
     Text,
