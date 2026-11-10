@@ -756,20 +756,37 @@ fn temp_for(path: &Path) -> PathBuf {
 /// Write the temporary file of every page of every plan, or none: a full disk or a
 /// permission problem leaves the pages as they were. Errors carry the index of the plan.
 pub fn stage(plans: &[(usize, &Plan)]) -> Result<(), (usize, Error)> {
+    let mut created: Vec<PathBuf> = vec![];
     for (n, (index, plan)) in plans.iter().enumerate() {
         for (path, content) in &plan.writes {
             let result = path
                 .parent()
-                .map_or(Ok(()), std::fs::create_dir_all)
+                .map_or(Ok(()), |dir| create_dirs(dir, &mut created))
                 .and_then(|_| std::fs::write(temp_for(path), content));
             if let Err(source) = result {
                 discard(&plans[..=n]);
+                created.sort_by_key(|d| std::cmp::Reverse(d.components().count()));
+                for dir in &created {
+                    let _ = std::fs::remove_dir(dir);
+                }
                 let path = path.clone();
                 return Err((*index, Error::Io { path, source }));
             }
         }
     }
     Ok(())
+}
+
+/// `create_dir_all`, noting in `created` the directories that did not exist before.
+fn create_dirs(dir: &Path, created: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    let missing: Vec<PathBuf> = dir
+        .ancestors()
+        .take_while(|d| !d.as_os_str().is_empty() && !d.exists())
+        .map(Path::to_owned)
+        .collect();
+    let result = std::fs::create_dir_all(dir);
+    created.extend(missing.into_iter().filter(|d| d.is_dir()));
+    result
 }
 
 pub fn discard(plans: &[(usize, &Plan)]) {
@@ -957,6 +974,26 @@ mod tests {
             relative(Path::new("/s/data"), Path::new("/s/data/a.graphql")),
             "a.graphql"
         );
+    }
+
+    #[test]
+    fn a_failed_stage_removes_the_directories_it_created() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target/tmp")
+            .join("gqlfreez-test-stage-dirs");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("kept")).unwrap();
+        std::fs::write(root.join("file"), "").unwrap();
+        let plan = Plan {
+            writes: vec![
+                (root.join("kept/new/deeper/a.md"), "a".into()),
+                (root.join("file/b.md"), "b".into()),
+            ],
+            ..Plan::default()
+        };
+        assert!(stage(&[(0, &plan)]).is_err());
+        assert!(root.join("kept").is_dir(), "it existed before");
+        assert!(!root.join("kept/new").exists());
     }
 
     #[test]
