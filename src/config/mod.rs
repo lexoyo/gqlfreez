@@ -120,29 +120,18 @@ pub struct Resolved {
 
 /// Find and read a config file, starting at `from` and walking up to the filesystem root.
 pub fn discover(from: &Path) -> Result<Resolved, Error> {
-    for current in from.ancestors() {
-        if let Some(found) = in_dir(current)? {
-            return Ok(found);
-        }
-    }
-    Ok(Resolved::default())
+    Ok(find(from, None)?
+        .map(|path| read(&path))
+        .transpose()?
+        .unwrap_or_default())
 }
 
-/// The config closest to `from`, walking up no further than `root`.
-///
-/// `None` when there is none between the two: the caller decides what applies then.
-pub fn nearest(from: &Path, root: &Path) -> Result<Option<Resolved>, Error> {
-    for current in from.ancestors().take_while(|d| d.starts_with(root)) {
-        if let Some(found) = in_dir(current)? {
-            return Ok(Some(found));
-        }
-    }
-    Ok(None)
-}
-
-/// The config file that applies to a file in `from`: the first one found walking up.
-pub fn closest_file(from: &Path) -> Result<Option<PathBuf>, Error> {
-    for current in from.ancestors() {
+/// The config file closest to `from`, walking up no further than `limit` when there is one.
+pub(crate) fn find(from: &Path, limit: Option<&Path>) -> Result<Option<PathBuf>, Error> {
+    for current in from
+        .ancestors()
+        .take_while(|d| limit.is_none_or(|limit| d.starts_with(limit)))
+    {
         if let Some(found) = file_in(current)? {
             return Ok(Some(found));
         }
@@ -150,11 +139,7 @@ pub fn closest_file(from: &Path) -> Result<Option<PathBuf>, Error> {
     Ok(None)
 }
 
-fn in_dir(current: &Path) -> Result<Option<Resolved>, Error> {
-    file_in(current)?.map(|path| read(&path)).transpose()
-}
-
-pub fn file_in(current: &Path) -> Result<Option<PathBuf>, Error> {
+fn file_in(current: &Path) -> Result<Option<PathBuf>, Error> {
     let found: Vec<PathBuf> = SEARCH_PLACES
         .iter()
         .map(|n| current.join(n))

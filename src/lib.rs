@@ -78,7 +78,7 @@ pub async fn run(options: &Options) -> Result<Vec<FileResult>, Error> {
         path: options.root.clone(),
         source,
     })?;
-    let queries = discover::find(&options.root, &options.glob)?;
+    let queries = discover::find(&root, &options.glob)?;
     if queries.is_empty() {
         return Err(Error::NoQueries {
             root: options.root.clone(),
@@ -86,9 +86,9 @@ pub async fn run(options: &Options) -> Result<Vec<FileResult>, Error> {
         });
     }
     // Configs are read before any request: a typo in one must not cost a full fetch.
-    let configs = endpoint::configs(&queries, &root)?;
+    let configs = endpoint::configs(&queries)?;
     let collections = collection::resolve(&queries, &configs, &root)?;
-    let targets = endpoint::resolve(&queries, &configs, options, &root)?;
+    let targets = endpoint::resolve(&queries, &configs, options)?;
     if !options.check && !options.dry_run {
         output::sweep_temporaries(&queries.iter().map(|q| q.output.clone()).collect::<Vec<_>>());
     }

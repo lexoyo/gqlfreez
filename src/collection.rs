@@ -75,7 +75,7 @@ impl Plan {
 }
 
 /// The collection of each query, in the same order, from the config each one uses.
-/// `root` must be canonical.
+/// `root` and the queries must be canonical.
 pub fn resolve(
     queries: &[Query],
     configs: &[Arc<Resolved>],
@@ -92,11 +92,7 @@ pub fn resolve(
             collections.push(None);
             continue;
         };
-        let source = q.source.canonicalize().map_err(|source| Error::Io {
-            path: q.source.clone(),
-            source,
-        })?;
-        collections.push(match keys.get(&source) {
+        collections.push(match keys.get(&q.source) {
             Some(key) => Some(Arc::new(load(
                 origin,
                 key,
@@ -124,22 +120,22 @@ fn all_keys(
         .filter_map(|c| c.origin.clone().map(|origin| (origin, c.clone())))
         .collect();
     let mut files: BTreeSet<PathBuf> = read.keys().cloned().collect();
-    let mut seen: HashSet<PathBuf> = HashSet::new();
+    let mut walked: HashSet<PathBuf> = HashSet::new();
     for q in queries {
-        let dir = q
-            .source
-            .parent()
-            .and_then(|d| d.canonicalize().ok())
-            .unwrap_or_else(|| root.to_owned());
-        for current in dir.ancestors().take_while(|d| d.starts_with(root)) {
-            if !seen.insert(current.to_owned()) {
+        let mut from = q.source.parent().map(Path::to_owned);
+        while let Some(dir) = from {
+            let Some(file) = config::find(&dir, Some(root))? else {
+                break;
+            };
+            from = file.parent().and_then(Path::parent).map(Path::to_owned);
+            if !walked.insert(file.clone()) {
                 break;
             }
-            files.extend(config::file_in(current)?);
+            files.insert(file);
         }
     }
     // Above the root, a config no query uses must not block the run if it is broken.
-    if let Ok(Some(above)) = config::closest_file(root) {
+    if let Ok(Some(above)) = config::find(root, None) {
         if !files.contains(&above) {
             if let Ok(c) = config::read(&above) {
                 read.insert(above.clone(), Arc::new(c));
@@ -164,10 +160,7 @@ fn all_keys(
 /// Every key, by the canonical path of the query it names. A key must name a query file
 /// whose closest config is this one: otherwise it would be silently ignored.
 fn keys_of(origin: &Path, config: &Resolved) -> Result<HashMap<PathBuf, String>, Error> {
-    let this = origin
-        .canonicalize()
-        .map_err(|e| Error::Config(format!("{}: cannot be resolved: {e}", origin.display())))?;
-    let base = this.parent().unwrap_or(Path::new("/"));
+    let base = origin.parent().unwrap_or(Path::new("/"));
     let mut keys: HashMap<PathBuf, String> = HashMap::new();
     for key in config.collections.keys() {
         let fail = |why: String| {
@@ -195,9 +188,8 @@ fn keys_of(origin: &Path, config: &Resolved) -> Result<HashMap<PathBuf, String>,
                 path.display()
             )));
         };
-        let closest = config::closest_file(query.parent().unwrap_or(base))?
-            .and_then(|c| c.canonicalize().ok());
-        if closest.as_deref() != Some(this.as_path()) {
+        let closest = config::find(query.parent().unwrap_or(base), None)?;
+        if closest.as_deref() != Some(origin) {
             return Err(fail(format!(
                 "names {}, which uses {} instead",
                 query.display(),
@@ -211,7 +203,7 @@ fn keys_of(origin: &Path, config: &Resolved) -> Result<HashMap<PathBuf, String>,
     Ok(keys)
 }
 
-/// Validate one entry. `root` must be canonical.
+/// Validate one entry. `origin`, `query` and `root` must be canonical.
 fn load(
     origin: &Path,
     key: &str,
@@ -241,19 +233,9 @@ fn load(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let base = origin
-        .parent()
-        .unwrap_or(Path::new("."))
-        .canonicalize()
-        .map_err(|e| fail(format!("the config's folder cannot be resolved: {e}")))?;
-    let dir = confine(&base, &raw.dir, root).map_err(fail)?;
-    let canonical = query.source.canonicalize().map_err(|e| {
-        fail(format!(
-            "{} cannot be resolved: {e}",
-            query.source.display()
-        ))
-    })?;
-    let owner = relative(&dir, &canonical);
+    let base = origin.parent().unwrap_or(Path::new("/"));
+    let dir = confine(base, &raw.dir, root).map_err(fail)?;
+    let owner = relative(&dir, &query.source);
 
     Ok(Collection {
         config: origin.to_owned(),
