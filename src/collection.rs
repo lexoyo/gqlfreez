@@ -661,7 +661,7 @@ impl Collection {
                 if entry.name != name {
                     // Same file on a case-insensitive disk: remove it first, then write.
                     plan.removals.push(entry.path.clone());
-                } else if same_text(&entry.path, &content) {
+                } else if output::same(&entry.path, &content, output::Compare::Text) {
                     plan.unchanged += 1;
                     continue;
                 }
@@ -729,65 +729,17 @@ fn read_marker(path: &Path) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// Ignores CRLF, for a page checked out by Git on Windows.
-fn same_text(path: &Path, fresh: &str) -> bool {
-    std::fs::read_to_string(path).is_ok_and(|existing| existing.replace("\r\n", "\n") == fresh)
-}
-
-const TEMP_SUFFIX: &str = ".gqlfreez-tmp";
-
-fn temp_for(path: &Path) -> PathBuf {
-    let mut name = path.file_name().unwrap_or_default().to_owned();
-    name.push(TEMP_SUFFIX);
-    path.with_file_name(name)
-}
-
-/// Write the temporary file of every page of every plan, or none: a full disk or a
-/// permission problem leaves the pages as they were. Errors carry the index of the plan.
-pub fn stage(plans: &[(usize, &Plan)]) -> Result<(), (usize, Error)> {
-    for (n, (index, plan)) in plans.iter().enumerate() {
-        for (path, content) in &plan.writes {
-            let result = path
-                .parent()
-                .map_or(Ok(()), std::fs::create_dir_all)
-                .and_then(|_| std::fs::write(temp_for(path), content));
-            if let Err(source) = result {
-                discard(&plans[..=n]);
-                let path = path.clone();
-                return Err((*index, Error::Io { path, source }));
-            }
-        }
-    }
-    Ok(())
-}
-
-pub fn discard(plans: &[(usize, &Plan)]) {
-    for (path, _) in plans.iter().flat_map(|(_, p)| &p.writes) {
-        let _ = std::fs::remove_file(temp_for(path));
-    }
-}
-
-/// Remove the pages no longer produced, then move the staged ones into place. Removals
-/// first: a page whose name only changed case is the same file on macOS and Windows.
-pub fn finish(plans: &[(usize, &Plan)]) -> Result<(), (usize, Error)> {
+/// Remove the pages no longer produced. Before the new pages are moved into place: a page
+/// whose name only changed case is the same file on macOS and Windows.
+pub fn remove_stale(plans: &[(usize, &Plan)]) -> Result<(), (usize, Error)> {
     for (index, plan) in plans {
         for path in &plan.removals {
             match std::fs::remove_file(path) {
-                Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
-                    discard(plans);
+                Err(source) if source.kind() != std::io::ErrorKind::NotFound => {
                     let path = path.clone();
-                    return Err((*index, Error::Io { path, source: e }));
+                    return Err((*index, Error::Io { path, source }));
                 }
                 _ => {}
-            }
-        }
-    }
-    for (index, plan) in plans {
-        for (path, _) in &plan.writes {
-            if let Err(source) = std::fs::rename(temp_for(path), path) {
-                discard(plans);
-                let path = path.clone();
-                return Err((*index, Error::Io { path, source }));
             }
         }
     }

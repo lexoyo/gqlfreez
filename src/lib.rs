@@ -277,19 +277,30 @@ fn commit(results: &mut [FileResult], plans: &[Option<collection::Plan>], option
         results[i].outcome = Outcome::Failed(Error::Collection { path, message });
     }
 
+    let pages: Vec<(usize, &PathBuf, &String)> = with_plans
+        .iter()
+        .flat_map(|(i, plan)| plan.writes.iter().map(move |(path, page)| (*i, path, page)))
+        .collect();
+    let discard = |results: &[FileResult]| {
+        for r in results {
+            output::discard(&r.output);
+        }
+        for (_, path, _) in &pages {
+            output::discard(path);
+        }
+    };
+
     let failed = results.iter().any(FileResult::is_failure);
     if failed || options.check || options.dry_run {
-        for r in results.iter() {
-            output::discard(&r.output);
-        }
+        discard(results);
         return;
     }
-    if let Err((i, e)) = collection::stage(&with_plans) {
-        results[i].outcome = Outcome::Failed(e);
-        for r in results.iter() {
-            output::discard(&r.output);
+    for (i, path, page) in &pages {
+        if let Err(e) = output::write_temp(path, page) {
+            results[*i].outcome = Outcome::Failed(e);
+            discard(results);
+            return;
         }
-        return;
     }
     for r in results.iter_mut() {
         if matches!(r.outcome, Outcome::Frozen { .. }) {
@@ -298,8 +309,17 @@ fn commit(results: &mut [FileResult], plans: &[Option<collection::Plan>], option
             }
         }
     }
-    if let Err((i, e)) = collection::finish(&with_plans) {
+    if let Err((i, e)) = collection::remove_stale(&with_plans) {
         results[i].outcome = Outcome::Failed(e);
+        discard(results);
+        return;
+    }
+    for (i, path, _) in &pages {
+        if let Err(e) = output::commit(path) {
+            results[*i].outcome = Outcome::Failed(e);
+            discard(results);
+            return;
+        }
     }
 }
 

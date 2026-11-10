@@ -47,8 +47,17 @@ pub enum Staged {
     Unchanged,
 }
 
+/// How a file on disk is compared with what would replace it.
+pub enum Compare {
+    Json,
+    /// Line endings aside.
+    Text,
+}
+
 fn temp_for(path: &Path) -> std::path::PathBuf {
-    path.with_extension("json.gqlfreez-tmp")
+    let mut name = path.file_name().unwrap_or_default().to_owned();
+    name.push(".gqlfreez-tmp");
+    path.with_file_name(name)
 }
 
 /// Move a staged file into place. Atomic on the same filesystem.
@@ -72,21 +81,31 @@ pub fn discard(path: &Path) {
 }
 
 /// Write only when the content actually differs, and never leave a truncated file behind.
-///
-/// The comparison parses the file on disk rather than comparing bytes: on Windows with
-/// `core.autocrlf`, a committed `.json` comes back with CRLF and a byte comparison would
-/// rewrite on every single run.
 pub fn stage(path: &Path, rendered: &str) -> Result<Staged, Error> {
-    if let Ok(existing) = std::fs::read_to_string(path) {
-        if let Ok(parsed) = serde_json::from_str::<Value>(&existing) {
-            if let Ok(fresh) = serde_json::from_str::<Value>(rendered) {
-                if parsed == fresh {
-                    return Ok(Staged::Unchanged);
-                }
-            }
-        }
+    if same(path, rendered, Compare::Json) {
+        return Ok(Staged::Unchanged);
     }
+    write_temp(path, rendered)?;
+    Ok(Staged::Ready)
+}
 
+/// The comparison ignores CRLF: on Windows with `core.autocrlf`, a committed file comes back
+/// with CRLF and a byte comparison would rewrite it on every single run.
+pub(crate) fn same(path: &Path, rendered: &str, compare: Compare) -> bool {
+    let Ok(existing) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    match compare {
+        Compare::Json => {
+            let parse = |text: &str| serde_json::from_str::<Value>(text).ok();
+            parse(&existing).is_some_and(|parsed| parse(rendered) == Some(parsed))
+        }
+        Compare::Text => existing.replace("\r\n", "\n") == rendered,
+    }
+}
+
+/// The temporary file `commit` moves into place, written whatever is on disk.
+pub(crate) fn write_temp(path: &Path, rendered: &str) -> Result<(), Error> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|source| Error::Io {
             path: parent.to_owned(),
@@ -98,8 +117,7 @@ pub fn stage(path: &Path, rendered: &str) -> Result<Staged, Error> {
     std::fs::write(&tmp, rendered).map_err(|source| Error::Io {
         path: tmp.clone(),
         source,
-    })?;
-    Ok(Staged::Ready)
+    })
 }
 
 /// Remove stale temporary files left by an interrupted run.
