@@ -22,7 +22,7 @@ struct Cli {
     #[arg(default_value = ".")]
     root: PathBuf,
 
-    /// GraphQL endpoint. Otherwise resolved from graphql-config.
+    /// GraphQL endpoint for every file. Otherwise each file takes the closest graphql-config.
     #[arg(long)]
     endpoint: Option<String>,
 
@@ -219,11 +219,7 @@ fn build_options(cli: &Cli, logger: Logger) -> Result<Options, Error> {
         source,
     })?;
 
-    let config = gqlfreez::config::discover(&root)?;
-
-    let endpoint = cli.endpoint.clone().or(config.endpoint).unwrap_or_default();
-
-    let mut headers = config.headers;
+    let mut headers = vec![];
     for raw in &cli.headers {
         let (name, value) = raw.split_once(':').ok_or_else(|| {
             Error::Config(format!("--header expects \"Name: value\", got {raw:?}"))
@@ -234,7 +230,7 @@ fn build_options(cli: &Cli, logger: Logger) -> Result<Options, Error> {
     Ok(Options {
         root,
         glob: cli.glob.clone(),
-        endpoint,
+        endpoint: cli.endpoint.clone(),
         headers,
         concurrency: cli.concurrency,
         page_size: cli.page_size,

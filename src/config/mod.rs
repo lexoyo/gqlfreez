@@ -86,7 +86,7 @@ pub enum Endpoint {
 }
 
 /// What the CLI actually needs out of the config.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Resolved {
     pub endpoint: Option<String>,
     pub headers: Vec<(String, String)>,
@@ -96,53 +96,69 @@ pub struct Resolved {
 
 /// Find and read a config file, starting at `from` and walking up to the filesystem root.
 pub fn discover(from: &Path) -> Result<Resolved, Error> {
-    let mut dir = Some(from);
-    while let Some(current) = dir {
-        let found: Vec<PathBuf> = SEARCH_PLACES
-            .iter()
-            .map(|n| current.join(n))
-            .filter(|p| p.is_file())
-            .collect();
-
-        if found.len() > 1 {
-            let names: Vec<String> = found
-                .iter()
-                .map(|p| {
-                    p.file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .into_owned()
-                })
-                .collect();
-            return Err(Error::Config(format!(
-                "found several config files in {}: {} — keep only one",
-                current.display(),
-                names.join(", ")
-            )));
+    for current in from.ancestors() {
+        if let Some(found) = in_dir(current)? {
+            return Ok(found);
         }
-        if let Some(path) = found.into_iter().next() {
-            return read(&path);
-        }
-
-        let unsupported: Vec<String> = UNSUPPORTED_PLACES
-            .iter()
-            .filter(|n| current.join(n).is_file())
-            .map(|n| (*n).to_string())
-            .collect();
-        if !unsupported.is_empty() {
-            return Err(Error::Config(format!(
-                "found {} in {}, which gqlfreez cannot evaluate (it is a binary, not a JS runtime).\n\
-                 Use a declarative config instead: {}.\n\
-                 Or pass --endpoint directly.",
-                unsupported.join(", "),
-                current.display(),
-                SEARCH_PLACES.join(", ")
-            )));
-        }
-
-        dir = current.parent();
     }
     Ok(Resolved::default())
+}
+
+/// The config closest to `from`, walking up no further than `root`.
+///
+/// `None` when there is none between the two: the caller decides what applies then.
+pub fn nearest(from: &Path, root: &Path) -> Result<Option<Resolved>, Error> {
+    for current in from.ancestors().take_while(|d| d.starts_with(root)) {
+        if let Some(found) = in_dir(current)? {
+            return Ok(Some(found));
+        }
+    }
+    Ok(None)
+}
+
+fn in_dir(current: &Path) -> Result<Option<Resolved>, Error> {
+    let found: Vec<PathBuf> = SEARCH_PLACES
+        .iter()
+        .map(|n| current.join(n))
+        .filter(|p| p.is_file())
+        .collect();
+
+    if found.len() > 1 {
+        let names: Vec<String> = found
+            .iter()
+            .map(|p| {
+                p.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        return Err(Error::Config(format!(
+            "found several config files in {}: {} — keep only one",
+            current.display(),
+            names.join(", ")
+        )));
+    }
+    if let Some(path) = found.into_iter().next() {
+        return read(&path).map(Some);
+    }
+
+    let unsupported: Vec<String> = UNSUPPORTED_PLACES
+        .iter()
+        .filter(|n| current.join(n).is_file())
+        .map(|n| (*n).to_string())
+        .collect();
+    if !unsupported.is_empty() {
+        return Err(Error::Config(format!(
+            "found {} in {}, which gqlfreez cannot evaluate (it is a binary, not a JS runtime).\n\
+             Use a declarative config instead: {}.\n\
+             Or pass --endpoint directly.",
+            unsupported.join(", "),
+            current.display(),
+            SEARCH_PLACES.join(", ")
+        )));
+    }
+    Ok(None)
 }
 
 fn read(path: &Path) -> Result<Resolved, Error> {

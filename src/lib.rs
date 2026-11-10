@@ -10,6 +10,7 @@ pub mod logger;
 pub mod options;
 
 mod discover;
+mod endpoint;
 mod fetch;
 mod output;
 mod paginate;
@@ -93,6 +94,7 @@ pub async fn run(options: &Options) -> Result<Vec<FileResult>, Error> {
             options.glob
         )));
     }
+    let targets = endpoint::resolve(&queries, options, &root)?;
     output::sweep_temporaries(&queries.iter().map(|q| q.output.clone()).collect::<Vec<_>>());
 
     options.logger.status(&format!(
@@ -106,7 +108,8 @@ pub async fn run(options: &Options) -> Result<Vec<FileResult>, Error> {
     let stop = Arc::new(AtomicBool::new(false));
 
     let mut tasks = tokio::task::JoinSet::new();
-    for (index, (q, split)) in queries.iter().cloned().zip(splits).enumerate() {
+    let jobs = queries.iter().cloned().zip(targets).zip(splits);
+    for (index, ((q, target), split)) in jobs.enumerate() {
         let permit = semaphore.clone();
         let client = client.clone();
         let options = options.clone();
@@ -117,7 +120,7 @@ pub async fn run(options: &Options) -> Result<Vec<FileResult>, Error> {
             if stop.load(Ordering::Relaxed) {
                 return None;
             }
-            let (outcome, plan) = one(&client, &options, &q, split.as_deref()).await;
+            let (outcome, plan) = one(&client, &options, &target, &q, split.as_deref()).await;
             if matches!(outcome, Outcome::Failed(_)) {
                 stop.store(true, Ordering::Relaxed);
             }
@@ -158,10 +161,11 @@ pub async fn run(options: &Options) -> Result<Vec<FileResult>, Error> {
 async fn one(
     client: &reqwest::Client,
     options: &Options,
+    target: &endpoint::Target,
     q: &discover::Query,
     split: Option<&split::Split>,
 ) -> (Outcome, Option<split::Plan>) {
-    let (data, outcome) = match fetch(client, options, q).await {
+    let (data, outcome) = match fetch(client, options, target, q).await {
         Fetched::Data(data, outcome) => (data, outcome),
         Fetched::Done(Outcome::Skipped { reason }) if split.is_some() => {
             let error = Error::Split {
@@ -191,7 +195,12 @@ enum Fetched {
 
 /// The rendered JSON is staged in a temporary file, so memory stays bounded to a single
 /// response rather than the whole tree.
-async fn fetch(client: &reqwest::Client, options: &Options, q: &discover::Query) -> Fetched {
+async fn fetch(
+    client: &reqwest::Client,
+    options: &Options,
+    target: &endpoint::Target,
+    q: &discover::Query,
+) -> Fetched {
     use Fetched::Done;
     let source = match std::fs::read_to_string(&q.source) {
         Ok(s) => s,
@@ -223,7 +232,12 @@ async fn fetch(client: &reqwest::Client, options: &Options, q: &discover::Query)
 
     let deadline = tokio::time::timeout(
         options.file_timeout,
-        paginate::run(client, options, &q.source, &analysis),
+        paginate::run(
+            fetch::Remote { client, target },
+            options,
+            &q.source,
+            &analysis,
+        ),
     );
     let (data, pages) = match deadline.await {
         Ok(Ok(v)) => v,

@@ -7,6 +7,7 @@ use futures_util::StreamExt;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
+use crate::endpoint::Target;
 use crate::errors::Error;
 use crate::options::Options;
 
@@ -59,14 +60,6 @@ struct GraphQlResponse {
 
 pub fn client(options: &Options) -> Result<reqwest::Client, Error> {
     let mut headers = reqwest::header::HeaderMap::new();
-    for (name, value) in &options.headers {
-        let name: reqwest::header::HeaderName = name
-            .parse()
-            .map_err(|_| Error::Config(format!("invalid header name {name:?}")))?;
-        let value = reqwest::header::HeaderValue::from_str(value)
-            .map_err(|_| Error::Config(format!("invalid value for header {name}")))?;
-        headers.insert(name, value);
-    }
     headers.insert(
         reqwest::header::ACCEPT,
         reqwest::header::HeaderValue::from_static(
@@ -85,9 +78,16 @@ pub fn client(options: &Options) -> Result<reqwest::Client, Error> {
         .map_err(|e| Error::Config(format!("could not build the HTTP client: {e}")))
 }
 
+/// Where requests go: the shared HTTP client, and one file's endpoint and headers.
+#[derive(Clone, Copy)]
+pub struct Remote<'a> {
+    pub client: &'a reqwest::Client,
+    pub target: &'a Target,
+}
+
 /// One request, with retries on transient failures only.
 pub async fn execute(
-    client: &reqwest::Client,
+    remote: Remote<'_>,
     options: &Options,
     file: &Path,
     query: &str,
@@ -96,7 +96,7 @@ pub async fn execute(
 ) -> Result<Value, Error> {
     let mut attempt = 0u32;
     loop {
-        match once(client, options, file, query, operation, &variables).await {
+        match once(remote, options, file, query, operation, &variables).await {
             Ok(value) => return Ok(value),
             Err(Fault::Fatal(error)) => return Err(error),
             Err(Fault::Transient { error, wait }) => {
@@ -135,7 +135,7 @@ impl Fault {
 }
 
 async fn once(
-    client: &reqwest::Client,
+    remote: Remote<'_>,
     options: &Options,
     file: &Path,
     query: &str,
@@ -152,8 +152,10 @@ async fn once(
         body.insert("operationName".into(), Value::String(name.to_owned()));
     }
 
-    let response = client
-        .post(&options.endpoint)
+    let response = remote
+        .client
+        .post(&remote.target.url)
+        .headers(remote.target.headers.clone())
         .json(&Value::Object(body))
         .send()
         .await

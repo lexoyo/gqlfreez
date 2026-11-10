@@ -32,6 +32,8 @@ struct Stub {
     port: u16,
     calls: Arc<AtomicUsize>,
     queries: Arc<std::sync::Mutex<Vec<String>>>,
+    /// The `Authorization` header of each request, empty when there was none.
+    auth: Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 impl Stub {
@@ -45,21 +47,25 @@ fn start(behaviour: Behaviour) -> Stub {
     let port = listener.local_addr().unwrap().port();
     let calls = Arc::new(AtomicUsize::new(0));
     let queries = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let auth = Arc::new(std::sync::Mutex::new(Vec::new()));
     let c = calls.clone();
     let q = queries.clone();
+    let a = auth.clone();
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(stream) = stream else { continue };
             let n = c.fetch_add(1, Ordering::SeqCst);
             let behaviour = behaviour.clone();
             let q = q.clone();
-            std::thread::spawn(move || handle(stream, behaviour, n, q));
+            let a = a.clone();
+            std::thread::spawn(move || handle(stream, behaviour, n, q, a));
         }
     });
     Stub {
         port,
         calls,
         queries,
+        auth,
     }
 }
 
@@ -68,9 +74,11 @@ fn handle(
     behaviour: Behaviour,
     call: usize,
     queries: Arc<std::sync::Mutex<Vec<String>>>,
+    auth: Arc<std::sync::Mutex<Vec<String>>>,
 ) {
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut length = 0usize;
+    let mut authorization = String::new();
     loop {
         let mut line = String::new();
         if reader.read_line(&mut line).unwrap_or(0) == 0 {
@@ -81,6 +89,9 @@ fn handle(
         }
         if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
             length = v.trim().parse().unwrap_or(0);
+        }
+        if line.to_ascii_lowercase().starts_with("authorization:") {
+            authorization = line["authorization:".len()..].trim().to_string();
         }
     }
     let mut body = vec![0u8; length];
@@ -93,6 +104,7 @@ fn handle(
         .and_then(Value::as_str)
         .map(str::to_owned);
     queries.lock().unwrap().push(query);
+    auth.lock().unwrap().push(authorization);
 
     let (status, content_type, payload) = match behaviour {
         Behaviour::HtmlIn200 => (
@@ -694,5 +706,158 @@ fn split_two_queries_writing_the_same_page_write_nothing() {
     let out = gqlfreez(&dir, &stub.endpoint(), &[]);
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("written by two queries"));
+    assert_eq!(pages(&dir), ["_index.md"]);
+}
+
+// One run, several data sources: each query takes the graphql-config closest to it.
+
+fn graphqlrc(dir: &Path, rel: &str, endpoint: &str, token: &str) {
+    put(
+        dir,
+        rel,
+        &format!(
+            "extensions:\n  endpoints:\n    default:\n      url: {endpoint}\n      headers:\n        Authorization: Bearer {token}\n"
+        ),
+    );
+}
+
+/// No `--endpoint`: the addresses come from the configs.
+fn gqlfreez_from_configs(dir: &Path, extra: &[&str]) -> std::process::Output {
+    std::process::Command::new(env!("CARGO_BIN_EXE_gqlfreez"))
+        .arg(dir)
+        .arg("--no-dotenv")
+        .args(extra)
+        .output()
+        .expect("run gqlfreez")
+}
+
+fn auth(stub: &Stub) -> Vec<String> {
+    stub.auth.lock().unwrap().clone()
+}
+
+/// Two sources laid out like Silex writes them, one `.graphqlrc.yml` each; `wp` is split.
+fn two_sources(name: &str) -> (PathBuf, Stub, Stub) {
+    let dir = site(name, article_split());
+    let wp = start(Behaviour::Data(posts(&["hello", "world"])));
+    let shop = start(Behaviour::Data(
+        json!({"products": {"nodes": [{"name": "mug"}]}}),
+    ));
+    graphqlrc(&dir, "data/wp/.graphqlrc.yml", &wp.endpoint(), "wp-token");
+    put(
+        &dir,
+        "data/shop/products.graphql",
+        "{ products(first: 5) { nodes { name } } }",
+    );
+    graphqlrc(
+        &dir,
+        "data/shop/.graphqlrc.yml",
+        &shop.endpoint(),
+        "shop-token",
+    );
+    (dir, wp, shop)
+}
+
+#[test]
+fn each_folder_takes_its_own_graphqlrc_in_one_run() {
+    let (dir, wp, shop) = two_sources("sources-two");
+    ok(&gqlfreez_from_configs(&dir, &[]));
+
+    assert_eq!(
+        read_json(&dir, "data/shop/products.json"),
+        json!({"products": {"nodes": [{"name": "mug"}]}})
+    );
+    assert_eq!(
+        read_json(&dir, "data/wp/article.json")["posts"]["nodes"][0]["slug"],
+        "hello"
+    );
+    assert_eq!(pages(&dir), ["_index.md", "hello.md", "world.md"]);
+    // Each token only ever goes to its own address.
+    assert_eq!(auth(&wp), ["Bearer wp-token"]);
+    assert_eq!(auth(&shop), ["Bearer shop-token"]);
+}
+
+#[test]
+fn a_folder_without_config_takes_the_closest_one_above() {
+    let dir = scratch("sources-closest");
+    let top = start(Behaviour::Simple);
+    let inner = start(Behaviour::Simple);
+    graphqlrc(&dir, "src/.graphqlrc.yml", &top.endpoint(), "top");
+    graphqlrc(&dir, "src/blog/.graphqlrc.yml", &inner.endpoint(), "inner");
+    put(
+        &dir,
+        "src/home/posts.graphql",
+        "{ posts(first: 1) { nodes { title } } }",
+    );
+    put(
+        &dir,
+        "src/blog/deep/posts.graphql",
+        "{ posts(first: 1) { nodes { title } } }",
+    );
+
+    // The root is `src/`: its own config counts, and so does one above it, as before.
+    ok(&gqlfreez_from_configs(&dir.join("src"), &[]));
+    assert_eq!(auth(&top), ["Bearer top"]);
+    assert_eq!(auth(&inner), ["Bearer inner"]);
+}
+
+#[test]
+fn a_config_above_the_root_still_applies_when_nothing_is_closer() {
+    let dir = scratch("sources-above-root");
+    let stub = start(Behaviour::Simple);
+    graphqlrc(&dir, ".graphqlrc.yml", &stub.endpoint(), "project");
+    put(
+        &dir,
+        "src/posts.graphql",
+        "{ posts(first: 1) { nodes { title } } }",
+    );
+
+    ok(&gqlfreez_from_configs(&dir.join("src"), &[]));
+    assert_eq!(auth(&stub), ["Bearer project"]);
+}
+
+#[test]
+fn the_endpoint_flag_wins_over_every_config() {
+    let (dir, wp, shop) = two_sources("sources-flag");
+    let forced = start(Behaviour::Data(posts(&["forced"])));
+    ok(&gqlfreez(&dir, &forced.endpoint(), &[]));
+
+    assert_eq!(forced.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(wp.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(shop.calls.load(Ordering::SeqCst), 0);
+    // A per-folder token is not sent to an address it was not written for.
+    assert_eq!(auth(&forced), ["", ""]);
+}
+
+#[test]
+fn a_header_flag_goes_to_every_source() {
+    let (dir, wp, shop) = two_sources("sources-header");
+    ok(&gqlfreez_from_configs(
+        &dir,
+        &["-H", "Authorization: Bearer cli"],
+    ));
+    assert_eq!(auth(&wp), ["Bearer cli"]);
+    assert_eq!(auth(&shop), ["Bearer cli"]);
+}
+
+#[test]
+fn a_query_with_no_endpoint_is_named_before_any_request() {
+    let (dir, wp, shop) = two_sources("sources-missing");
+    put(
+        &dir,
+        "data/orphan/q.graphql",
+        "{ posts(first: 1) { nodes { title } } }",
+    );
+
+    let out = gqlfreez_from_configs(&dir, &[]);
+    assert_eq!(out.status.code(), Some(2));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("orphan/q.graphql") && err.contains("no GraphQL endpoint"),
+        "{err}"
+    );
+    assert_eq!(
+        wp.calls.load(Ordering::SeqCst) + shop.calls.load(Ordering::SeqCst),
+        0
+    );
     assert_eq!(pages(&dir), ["_index.md"]);
 }

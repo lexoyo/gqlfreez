@@ -10,12 +10,13 @@ use serde_json::{Map, Value};
 
 use crate::errors::Error;
 use crate::fetch;
+use crate::fetch::Remote;
 use crate::options::Options;
 use crate::query::{Analysis, Connection};
 
 /// Run one query file to completion and return the merged `data`.
 pub async fn run(
-    client: &reqwest::Client,
+    remote: Remote<'_>,
     options: &Options,
     file: &Path,
     analysis: &Analysis,
@@ -29,7 +30,7 @@ pub async fn run(
 
     let first_query = analysis.page_one(options.page_size);
     let mut merged = fetch::execute(
-        client,
+        remote,
         options,
         file,
         &first_query,
@@ -40,7 +41,7 @@ pub async fn run(
     let mut pages = 1usize;
 
     for (index, conn) in analysis.paginated() {
-        pages += walk_connection(client, options, file, analysis, index, conn, &mut merged).await?;
+        pages += walk_connection(remote, options, file, analysis, index, conn, &mut merged).await?;
     }
 
     // Strip what we injected: the user never asked for it.
@@ -59,7 +60,7 @@ pub async fn run(
 
 /// Follow one connection to the end, appending into `merged`.
 async fn walk_connection(
-    client: &reqwest::Client,
+    remote: Remote<'_>,
     options: &Options,
     file: &Path,
     analysis: &Analysis,
@@ -134,7 +135,7 @@ async fn walk_connection(
         variables.insert(cursor_var.clone(), Value::String(current));
         let derived = analysis.derived(index, options.page_size);
         let page =
-            fetch::execute(client, options, file, &derived, Some("gqlfreez"), variables).await?;
+            fetch::execute(remote, options, file, &derived, Some("gqlfreez"), variables).await?;
         extra_pages += 1;
 
         let mut page = page;

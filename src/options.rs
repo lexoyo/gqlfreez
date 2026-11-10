@@ -8,7 +8,9 @@ use crate::logger::Logger;
 pub struct Options {
     pub root: PathBuf,
     pub glob: String,
-    pub endpoint: String,
+    /// `--endpoint`, for every file. `None`: each file takes the closest graphql-config.
+    pub endpoint: Option<String>,
+    /// Sent to every endpoint, on top of the config's own headers.
     pub headers: Vec<(String, String)>,
     pub concurrency: usize,
     pub page_size: usize,
@@ -55,18 +57,12 @@ impl Options {
         if self.max_pages == 0 {
             return Err(Error::Config("--max-pages must be at least 1".into()));
         }
-        if self.endpoint.trim().is_empty() {
-            return Err(Error::Config(
-                "no GraphQL endpoint. Pass --endpoint, or set one in graphql-config \
-                 (extensions.endpoints.default.url, or a schema URL)."
-                    .into(),
-            ));
-        }
-        if !self.endpoint.starts_with("http://") && !self.endpoint.starts_with("https://") {
-            return Err(Error::Config(format!(
-                "the endpoint must be an http(s) URL, got {:?}",
-                self.endpoint
-            )));
+        if let Some(endpoint) = &self.endpoint {
+            if !crate::endpoint::is_http(endpoint) {
+                return Err(Error::Config(format!(
+                    "the endpoint must be an http(s) URL, got {endpoint:?}"
+                )));
+            }
         }
         Ok(())
     }
