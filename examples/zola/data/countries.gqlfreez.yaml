@@ -4,7 +4,7 @@ split:
   dir: ../content/countries
   file: "{code}.md"
   frontMatter:
-    title: "{emoji} {name}"
+    title: "{name}"
     template: country.html
     extra:
       country: "{@item}"
