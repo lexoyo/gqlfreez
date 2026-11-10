@@ -84,17 +84,7 @@ pub struct CollectionConfig {
     pub list: String,
     pub dir: String,
     pub file: String,
-    #[serde(default)]
-    pub format: Format,
     pub front_matter: serde_json::Value,
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Format {
-    #[default]
-    Toml,
-    Yaml,
 }
 
 #[derive(Debug, Deserialize)]
