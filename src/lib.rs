@@ -116,7 +116,7 @@ pub async fn run(options: &Options) -> Result<Vec<FileResult>, Error> {
             if stop.load(Ordering::Relaxed) {
                 return None;
             }
-            let (outcome, plan) = one(&client, &options, &target, &q, collection.as_deref()).await;
+            let (outcome, plan) = one(&client, &options, &target, &q, collection.as_ref()).await;
             if matches!(outcome, Outcome::Failed(_)) {
                 stop.store(true, Ordering::Relaxed);
             }

@@ -21,8 +21,6 @@ const ALWAYS_EXCLUDE: &[&str] = &[
     "!**/vendor/**",
 ];
 
-pub const QUERY_EXTENSIONS: &[&str] = &["graphql", "gql"];
-
 #[derive(Debug, Clone)]
 pub struct Query {
     pub source: PathBuf,

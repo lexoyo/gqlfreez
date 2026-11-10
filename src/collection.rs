@@ -4,7 +4,8 @@
 //! Everything is computed in memory first (`plan`), and only written by `stage` and
 //! `finish`, so a failure while planning leaves the tree untouched, as for the JSON output.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::btree_map::Entry;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
@@ -13,7 +14,7 @@ use handlebars::{Context, Handlebars, PathSeg};
 use serde_json::{json, Map, Value};
 
 use crate::config::{self, Format, Resolved};
-use crate::discover::{Query, QUERY_EXTENSIONS};
+use crate::discover::Query;
 use crate::errors::Error;
 use crate::logger::Logger;
 use crate::output;
@@ -74,52 +75,78 @@ impl Plan {
     }
 }
 
-/// The collection of each query, in the same order, from the config each one uses.
-/// `root` and the queries must be canonical.
+/// The collection of each query, in the same order. A key must name a query found by this
+/// run whose closest config is this one: otherwise it would be silently ignored. `root` and
+/// the queries must be canonical.
 pub fn resolve(
     queries: &[Query],
     configs: &[Arc<Resolved>],
     root: &Path,
-) -> Result<Vec<Option<Arc<Collection>>>, Error> {
-    let by_config = all_keys(queries, configs, root)?;
-    let mut collections = vec![];
-    for (q, config) in queries.iter().zip(configs) {
-        let Some((origin, keys)) = config
-            .origin
-            .as_ref()
-            .and_then(|origin| by_config.get(origin).map(|keys| (origin, keys)))
-        else {
-            collections.push(None);
-            continue;
-        };
-        collections.push(match keys.get(&q.source) {
-            Some(key) => Some(Arc::new(load(
-                origin,
-                key,
-                &config.collections[key],
-                q,
-                root,
-            )?)),
-            None => None,
-        });
+) -> Result<Vec<Option<Collection>>, Error> {
+    let by_source: HashMap<&Path, usize> = queries
+        .iter()
+        .enumerate()
+        .map(|(i, q)| (q.source.as_path(), i))
+        .collect();
+    let mut collections: Vec<Option<Collection>> = queries.iter().map(|_| None).collect();
+    for (origin, config) in with_collections(queries, configs, root)? {
+        let base = origin.parent().unwrap_or(Path::new("/"));
+        for (key, raw) in &config.collections {
+            let fail = |why: String| {
+                Error::Config(format!(
+                    "{}: extensions.collections: {key:?} {why}",
+                    origin.display()
+                ))
+            };
+            let requested = Path::new(key);
+            if requested.has_root()
+                || matches!(requested.components().next(), Some(Component::Prefix(_)))
+                || key.contains('\\')
+            {
+                return Err(fail(
+                    "must be relative to the config file's folder, with forward slashes".into(),
+                ));
+            }
+            let path = base.join(requested);
+            let Some(i) = path
+                .canonicalize()
+                .ok()
+                .and_then(|p| by_source.get(p.as_path()).copied())
+            else {
+                return Err(fail(format!(
+                    "names no query file found by this run at {}",
+                    path.display()
+                )));
+            };
+            let used = configs[i].origin.as_deref();
+            if used != Some(origin.as_path()) {
+                return Err(fail(format!(
+                    "names {}, which uses {} instead",
+                    queries[i].source.display(),
+                    used.map_or("no config".into(), |c| c.display().to_string())
+                )));
+            }
+            if let Some(other) = &collections[i] {
+                return Err(fail(format!("names the same query as {:?}", other.key)));
+            }
+            collections[i] = Some(load(&origin, key, raw, &queries[i], root)?);
+        }
     }
     Ok(collections)
 }
 
-/// The keys of every config with collections, by config file. Not only the configs the
-/// queries use: a key in a config no query uses would otherwise be ignored without a word.
-/// These are the configs between the root and the queries, and the one found from the root
-/// up.
-fn all_keys(
+/// Every config with collections. Not only the configs the queries use: a key in a config no
+/// query uses would otherwise be ignored without a word. These are the configs between the
+/// root and the queries, and the one found from the root up.
+fn with_collections(
     queries: &[Query],
     configs: &[Arc<Resolved>],
     root: &Path,
-) -> Result<HashMap<PathBuf, HashMap<PathBuf, String>>, Error> {
-    let mut read: HashMap<PathBuf, Arc<Resolved>> = configs
+) -> Result<Vec<(PathBuf, Arc<Resolved>)>, Error> {
+    let mut read: BTreeMap<PathBuf, Arc<Resolved>> = configs
         .iter()
         .filter_map(|c| c.origin.clone().map(|origin| (origin, c.clone())))
         .collect();
-    let mut files: BTreeSet<PathBuf> = read.keys().cloned().collect();
     let mut walked: HashSet<PathBuf> = HashSet::new();
     for q in queries {
         let mut from = q.source.parent().map(Path::to_owned);
@@ -131,76 +158,24 @@ fn all_keys(
             if !walked.insert(file.clone()) {
                 break;
             }
-            files.insert(file);
+            if let Entry::Vacant(entry) = read.entry(file) {
+                let config = Arc::new(config::read(entry.key())?);
+                entry.insert(config);
+            }
         }
     }
     // Above the root, a config no query uses must not block the run if it is broken.
     if let Ok(Some(above)) = config::find(root, None) {
-        if !files.contains(&above) {
-            if let Ok(c) = config::read(&above) {
-                read.insert(above.clone(), Arc::new(c));
-                files.insert(above);
+        if let Entry::Vacant(entry) = read.entry(above) {
+            if let Ok(c) = config::read(entry.key()) {
+                entry.insert(Arc::new(c));
             }
         }
     }
-
-    let mut keys = HashMap::new();
-    for file in files {
-        let config = match read.get(&file) {
-            Some(c) => c.clone(),
-            None => Arc::new(config::read(&file)?),
-        };
-        if !config.collections.is_empty() {
-            keys.insert(file.clone(), keys_of(&file, &config)?);
-        }
-    }
-    Ok(keys)
-}
-
-/// Every key, by the canonical path of the query it names. A key must name a query file
-/// whose closest config is this one: otherwise it would be silently ignored.
-fn keys_of(origin: &Path, config: &Resolved) -> Result<HashMap<PathBuf, String>, Error> {
-    let base = origin.parent().unwrap_or(Path::new("/"));
-    let mut keys: HashMap<PathBuf, String> = HashMap::new();
-    for key in config.collections.keys() {
-        let fail = |why: String| {
-            Error::Config(format!(
-                "{}: extensions.collections: {key:?} {why}",
-                origin.display()
-            ))
-        };
-        let requested = Path::new(key);
-        if requested.has_root()
-            || matches!(requested.components().next(), Some(Component::Prefix(_)))
-            || key.contains('\\')
-        {
-            return Err(fail(
-                "must be relative to the config file's folder, with forward slashes".into(),
-            ));
-        }
-        let path = base.join(requested);
-        let is_query = path
-            .extension()
-            .is_some_and(|e| QUERY_EXTENSIONS.iter().any(|q| e == *q));
-        let Some(query) = path.canonicalize().ok().filter(|p| is_query && p.is_file()) else {
-            return Err(fail(format!(
-                "names no query file: expected a .graphql or .gql file at {}",
-                path.display()
-            )));
-        };
-        let closest = config::find(query.parent().unwrap_or(base), None)?;
-        if closest.as_deref() != Some(origin) {
-            return Err(fail(format!(
-                "names {}, which uses {} instead",
-                query.display(),
-                closest.map_or("no config".into(), |c| c.display().to_string())
-            )));
-        }
-        if let Some(other) = keys.insert(query, key.clone()) {
-            return Err(fail(format!("names the same query as {other:?}")));
-        }
-    }
-    Ok(keys)
+    Ok(read
+        .into_iter()
+        .filter(|(_, c)| !c.collections.is_empty())
+        .collect())
 }
 
 /// Validate one entry. `origin`, `query` and `root` must be canonical.
