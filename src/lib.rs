@@ -162,14 +162,14 @@ async fn one(
     q: &discover::Query,
     collection: Option<&collection::Collection>,
 ) -> (Outcome, Option<collection::Plan>) {
-    let (data, outcome) = match (fetch(client, options, target, q).await, collection) {
-        (Fetched::Data(data, outcome), _) => (data, outcome),
-        (Fetched::Done(Outcome::Skipped { reason }), Some(collection)) => {
+    let (data, outcome) = match (run_query(client, options, target, q).await, collection) {
+        (Ok(ran), _) => ran,
+        (Err(Outcome::Skipped { reason }), Some(collection)) => {
             let error =
                 collection.error(format!("no list to read, the query is skipped ({reason})"));
             return (Outcome::Failed(error), None);
         }
-        (Fetched::Done(outcome), _) => return (outcome, None),
+        (Err(outcome), _) => return (outcome, None),
     };
     let Some(collection) = collection else {
         return (outcome, None);
@@ -180,27 +180,19 @@ async fn one(
     }
 }
 
-enum Fetched {
-    /// The query ran. The result is the one before `--envelope`, which is what a collection
-    /// reads, so that its `list` keeps one meaning whatever the flags.
-    Data(Value, Outcome),
-    /// Skipped or failed: no list to read.
-    Done(Outcome),
-}
-
-/// The rendered JSON is staged in a temporary file. A result with a collection also stays in
-/// memory, with its pages, until the commit.
-async fn fetch(
+/// The rendered JSON is staged in a temporary file. The result returned is the one before
+/// `--envelope`, which is what a collection reads, so that its `list` keeps one meaning
+/// whatever the flags. Skipped or failed: no result to read.
+async fn run_query(
     client: &reqwest::Client,
     options: &Options,
     target: &endpoint::Target,
     q: &discover::Query,
-) -> Fetched {
-    use Fetched::Done;
+) -> Result<(Value, Outcome), Outcome> {
     let source = match std::fs::read_to_string(&q.source) {
         Ok(s) => s,
         Err(source_err) => {
-            return Done(Outcome::Failed(Error::Io {
+            return Err(Outcome::Failed(Error::Io {
                 path: q.source.clone(),
                 source: source_err,
             }))
@@ -209,16 +201,16 @@ async fn fetch(
 
     let analysis = match query::analyze(&source, &q.source) {
         Ok(a) => a,
-        Err(e) => return Done(Outcome::Failed(e)),
+        Err(e) => return Err(Outcome::Failed(e)),
     };
     match analysis.kind {
         query::Kind::FragmentsOnly => {
-            return Done(Outcome::Skipped {
+            return Err(Outcome::Skipped {
                 reason: "fragments only, no operation".into(),
             })
         }
         query::Kind::Empty => {
-            return Done(Outcome::Skipped {
+            return Err(Outcome::Skipped {
                 reason: "no definition".into(),
             })
         }
@@ -236,9 +228,9 @@ async fn fetch(
     );
     let (data, pages) = match deadline.await {
         Ok(Ok(v)) => v,
-        Ok(Err(e)) => return Done(Outcome::Failed(e)),
+        Ok(Err(e)) => return Err(Outcome::Failed(e)),
         Err(_) => {
-            return Done(Outcome::Failed(Error::Response {
+            return Err(Outcome::Failed(Error::Response {
                 path: q.source.clone(),
                 message: format!(
                     "gave up after --file-timeout ({}s)",
@@ -259,9 +251,9 @@ async fn fetch(
         Ok(output::Staged::Unchanged) => Outcome::Unchanged,
         Ok(output::Staged::Ready) if options.dry_run || options.check => Outcome::WouldChange,
         Ok(output::Staged::Ready) => Outcome::Frozen { pages },
-        Err(e) => return Done(Outcome::Failed(e)),
+        Err(e) => return Err(Outcome::Failed(e)),
     };
-    Fetched::Data(data, outcome)
+    Ok((data, outcome))
 }
 
 /// Move every staged file into place, then write the pages of the collections. Nothing is
@@ -290,15 +282,25 @@ fn commit(results: &mut [FileResult], plans: &[Option<collection::Plan>], option
         }
     };
 
+    let nothing_written = |results: &mut [FileResult]| {
+        for report in results.iter_mut().filter_map(|r| r.collection.as_mut()) {
+            *report = CollectionReport::default();
+        }
+    };
+
     let failed = results.iter().any(FileResult::is_failure);
     if failed || options.check || options.dry_run {
         discard(results);
+        if failed {
+            nothing_written(results);
+        }
         return;
     }
     for (i, path, page) in &pages {
         if let Err(e) = output::write_temp(path, page) {
             results[*i].outcome = Outcome::Failed(e);
             discard(results);
+            nothing_written(results);
             return;
         }
     }

@@ -1,8 +1,8 @@
 //! One file per item of a list in the frozen result, described in the graphql-config
 //! closest to the query, under `extensions.collections`, keyed by the query's path.
 //!
-//! Everything is computed in memory first (`plan`), and only written by `stage` and
-//! `finish`, so a failure while planning leaves the tree untouched, as for the JSON output.
+//! Everything is computed in memory first (`plan`), and only written once every query has
+//! succeeded, so a failure while planning leaves the tree untouched, as for the JSON output.
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -34,7 +34,8 @@ impl Format {
 /// A validated entry of `extensions.collections`.
 #[derive(Debug)]
 pub struct Collection {
-    config: PathBuf,
+    /// The config file the entry comes from.
+    origin: PathBuf,
     key: String,
     query: PathBuf,
     list: String,
@@ -48,7 +49,7 @@ pub struct Collection {
     owner: String,
 }
 
-/// What a run would do in one directory. Built without touching the disk beyond reading.
+/// The pages one collection writes and removes. Built without touching the disk beyond reading.
 #[derive(Debug, Default)]
 pub struct Plan {
     pub writes: Vec<(PathBuf, String)>,
@@ -211,7 +212,7 @@ fn load(
     let owner = relative(&dir, &query.source);
 
     Ok(Collection {
-        config: origin.to_owned(),
+        origin: origin.to_owned(),
         key: key.to_owned(),
         query: query.source.clone(),
         list: raw.list.clone(),
@@ -490,6 +491,45 @@ impl Collection {
     /// Compute every file of this collection, and what to remove. Reads the target directory,
     /// writes nothing.
     pub fn plan(&self, data: &Value, logger: &Logger) -> Result<Plan, Error> {
+        let pages = self.pages(data, logger)?;
+        let existing = self.scan()?;
+        let produced: HashSet<String> = pages.iter().map(|(n, _)| n.to_lowercase()).collect();
+        let mut plan = Plan::default();
+        for entry in existing.values() {
+            if entry.owner.as_ref() == Some(&self.owner)
+                && !produced.contains(&entry.name.to_lowercase())
+            {
+                plan.removals.push(entry.path.clone());
+            }
+        }
+
+        for (name, content) in pages {
+            let path = self.dir.join(&name);
+            if let Some(entry) = existing.get(&name.to_lowercase()) {
+                if entry.owner.as_ref() != Some(&self.owner) {
+                    return Err(self.error(format!(
+                        "{} exists and was not generated from this query, it is left alone \
+                         and nothing is written",
+                        entry.path.display()
+                    )));
+                }
+                if entry.name != name {
+                    // Same file on a case-insensitive disk: remove it first, then write.
+                    plan.removals.push(entry.path.clone());
+                } else if output::same(&entry.path, &content, output::Compare::Text) {
+                    plan.unchanged += 1;
+                    continue;
+                }
+            }
+            plan.writes.push((path, content));
+        }
+
+        plan.removals.sort();
+        Ok(plan)
+    }
+
+    /// The name and content of the page of every item in the list.
+    fn pages(&self, data: &Value, logger: &Logger) -> Result<Vec<(String, String)>, Error> {
         let fail = |message: String| self.error(message);
         let items: &[Value] = match lookup(data, &self.list) {
             Some(Value::Array(items)) => items,
@@ -511,7 +551,7 @@ impl Collection {
             if item.is_null() {
                 logger.warn(&format!(
                     "{}: collection {}: item {index} of {} is null, skipped",
-                    self.config.display(),
+                    self.origin.display(),
                     self.key,
                     self.list
                 ));
@@ -528,46 +568,12 @@ impl Collection {
             }
             pages.push((name, content));
         }
-
-        let existing = self.scan()?;
-        let produced: HashSet<String> = pages.iter().map(|(n, _)| n.to_lowercase()).collect();
-        let mut plan = Plan::default();
-        for entry in existing.values() {
-            if entry.owner.as_ref() == Some(&self.owner)
-                && !produced.contains(&entry.name.to_lowercase())
-            {
-                plan.removals.push(entry.path.clone());
-            }
-        }
-
-        for (name, content) in pages {
-            let path = self.dir.join(&name);
-            if let Some(entry) = existing.get(&name.to_lowercase()) {
-                if entry.owner.as_ref() != Some(&self.owner) {
-                    return Err(fail(format!(
-                        "{} exists and was not generated from this query, it is left alone \
-                         and nothing is written",
-                        entry.path.display()
-                    )));
-                }
-                if entry.name != name {
-                    // Same file on a case-insensitive disk: remove it first, then write.
-                    plan.removals.push(entry.path.clone());
-                } else if output::same(&entry.path, &content, output::Compare::Text) {
-                    plan.unchanged += 1;
-                    continue;
-                }
-            }
-            plan.writes.push((path, content));
-        }
-
-        plan.removals.sort();
-        Ok(plan)
+        Ok(pages)
     }
 
     pub fn error(&self, message: String) -> Error {
         Error::Collection {
-            path: self.config.clone(),
+            path: self.origin.clone(),
             message: format!("collection {}: {message}", self.key),
         }
     }
