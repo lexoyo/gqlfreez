@@ -78,16 +78,29 @@ pub async fn run(options: &Options) -> Result<Vec<FileResult>, Error> {
         path: options.root.clone(),
         source,
     })?;
-    let queries = discover::find(&root, &options.glob)?;
+    let queries = discover::find(&options.root, &options.glob)?;
     if queries.is_empty() {
         return Err(Error::NoQueries {
             root: options.root.clone(),
             glob: options.glob.clone(),
         });
     }
+    let canonical = queries
+        .iter()
+        .map(|q| {
+            let source = q.source.canonicalize().map_err(|source| Error::Io {
+                path: q.source.clone(),
+                source,
+            })?;
+            Ok(discover::Query {
+                source,
+                output: q.output.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
     // Configs are read before any request: a typo in one must not cost a full fetch.
-    let configs = endpoint::configs(&queries)?;
-    let collections = collection::resolve(&queries, &configs, &root)?;
+    let configs = endpoint::configs(&canonical)?;
+    let collections = collection::resolve(&canonical, &configs, &root)?;
     let targets = endpoint::resolve(&queries, &configs, options)?;
     if !options.check && !options.dry_run {
         output::sweep_temporaries(&queries.iter().map(|q| q.output.clone()).collect::<Vec<_>>());
