@@ -865,7 +865,9 @@ mod tests {
 
     #[test]
     fn dir_cannot_leave_the_root() {
-        let root = std::env::temp_dir().join("gqlfreez-test-confine");
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target/tmp")
+            .join("gqlfreez-test-confine");
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("data")).unwrap();
         let root = root.canonicalize().unwrap();
