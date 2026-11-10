@@ -87,13 +87,7 @@ pub fn resolve(
                     origin.display()
                 ))
             };
-            let requested = Path::new(key);
-            if requested.has_root()
-                || matches!(requested.components().next(), Some(Component::Prefix(_)))
-            {
-                return Err(fail("must be relative to the config file's folder".into()));
-            }
-            let path = base.join(requested);
+            let path = base.join(relative_to_config(key).map_err(fail)?);
             let canonical = path.canonicalize().ok();
             if canonical.as_ref().is_some_and(|p| !p.starts_with(root)) {
                 continue;
@@ -176,12 +170,7 @@ fn load(
 /// coming from someone else's repository must not write, let alone delete, outside the
 /// project.
 fn confine(base: &Path, dir: &str, root: &Path) -> Result<PathBuf, String> {
-    let requested = Path::new(dir);
-    if requested.is_absolute() || requested.has_root() {
-        return Err(format!(
-            "dir must be relative to the config file's folder, got {dir:?}"
-        ));
-    }
+    let requested = relative_to_config(dir).map_err(|e| format!("dir {e}, got {dir:?}"))?;
     let resolved = normalize(&base.join(requested));
     if !resolved.starts_with(root) {
         return Err(format!(
@@ -191,6 +180,14 @@ fn confine(base: &Path, dir: &str, root: &Path) -> Result<PathBuf, String> {
         ));
     }
     Ok(resolved)
+}
+
+fn relative_to_config(path: &str) -> Result<&str, String> {
+    let first = Path::new(path).components().next();
+    if matches!(first, Some(Component::RootDir | Component::Prefix(_))) {
+        return Err("must be relative to the config file's folder".into());
+    }
+    Ok(path)
 }
 
 fn normalize(path: &Path) -> PathBuf {
