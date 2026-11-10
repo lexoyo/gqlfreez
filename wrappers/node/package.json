@@ -1,6 +1,6 @@
 {
   "name": "gqlfreez",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Freeze GraphQL query results into JSON files, next to the queries.",
   "bin": "lib/index.js",
   "repository": {
