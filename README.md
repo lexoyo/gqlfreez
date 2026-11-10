@@ -2,23 +2,17 @@
 
 Freeze GraphQL query results into JSON files, next to the queries.
 
-`gqlfreez` looks through a folder, finds every `.graphql` / `.gql` file, runs the query
-against your endpoint, and writes the result to a `.json` file with the same name, right
-next to it.
+`gqlfreez` looks through a folder, finds every `.graphql` / `.gql` file, runs the query against your endpoint, and writes the result to a `.json` file with the same name, right next to it.
 
 ```
 src/queries/posts.graphql   →   src/queries/posts.json
 ```
 
-It runs **before** your build, and it works with any static site generator — Astro,
-Eleventy, Hugo, Jekyll, Zola — because it only reads and writes files. There is no plugin
-to install and nothing to set up in your generator.
+It runs **before** your build, and it works with any static site generator — Astro, Eleventy, Hugo, Jekyll, Zola — because it only reads and writes files. There is no plugin to install and nothing to set up in your generator.
 
 ## Install
 
-Download a binary from the [releases page](https://github.com/lexoyo/gqlfreez/releases) —
-Linux and macOS on x64 and arm64, Windows on x64. Nothing else to install: no Node, no
-Rust, no libraries.
+Download a binary from the [releases page](https://github.com/lexoyo/gqlfreez/releases) — Linux and macOS on x64 and arm64, Windows on x64. Nothing else to install: no Node, no Rust, no libraries.
 
 ```bash
 curl -fsSL https://github.com/lexoyo/gqlfreez/releases/latest/download/gqlfreez-linux-x64 \
@@ -27,8 +21,7 @@ curl -fsSL https://github.com/lexoyo/gqlfreez/releases/latest/download/gqlfreez-
 
 On macOS, replace `linux-x64` with `darwin-arm64` (Apple silicon) or `darwin-x64` (Intel).
 
-> `npx gqlfreez` and `cargo install gqlfreez` do **not** work yet — publishing to npm and
-> crates.io is still on the roadmap. For now, download the binary.
+> `npx gqlfreez` and `cargo install gqlfreez` do **not** work yet — publishing to npm and crates.io is still on the roadmap. For now, download the binary.
 
 ## Use
 
@@ -46,17 +39,13 @@ gqlfreez ./src --endpoint https://example.com/graphql
 { "posts": { "nodes": [ { "title": "…", "slug": "…" } ] } }
 ```
 
-The file holds what was inside `data`, not the whole GraphQL response: it starts with
-`{ "posts": … }`, not `{ "data": { "posts": … } }`. Pass `--envelope` to keep the whole
-response.
+The file holds what was inside `data`, not the whole GraphQL response: it starts with `{ "posts": … }`, not `{ "data": { "posts": … } }`. Pass `--envelope` to keep the whole response.
 
-See [`examples/`](./examples) for a working Eleventy site and a working Zola site, both
-against a public API you can run right now.
+See [`examples/`](./examples) for a working Eleventy site and a working Zola site, both against a public API you can run right now.
 
 ## Pagination
 
-**A field that contains `nodes` or `edges` is a Relay connection.** When you do not ask for
-a limit, `gqlfreez` fetches every page and joins the results.
+**A field that contains `nodes` or `edges` is a Relay connection.** When you do not ask for a limit, `gqlfreez` fetches every page and joins the results.
 
 ```graphql
 { posts { nodes { title } } }                    # everything
@@ -68,40 +57,22 @@ a limit, `gqlfreez` fetches every page and joins the results.
 Three ways to say "everything", because no single one works on every server:
 
 - **Leave `first` out.** Works on WPGraphQL and most servers.
-- **`first: auto`.** GitHub *requires* `first` or `last` on every connection, so leaving it
-  out fails there. `auto` never leaves your machine: `gqlfreez` replaces it with
-  `--page-size` before sending the query. The downside is that the schema expects an `Int`
-  there, so your editor will show an error.
-- **Write `after: $cursor` yourself.** Works everywhere and keeps autocompletion, but it is
-  longer.
+- **`first: auto`.** GitHub *requires* `first` or `last` on every connection, so leaving it out fails there. `auto` never leaves your machine: `gqlfreez` replaces it with `--page-size` before sending the query. The downside is that the schema expects an `Int` there, so your editor will show an error.
+- **Write `after: $cursor` yourself.** Works everywhere and keeps autocompletion, but it is longer.
 
-`pageInfo` does not turn pagination on, it is only a field. If you did not ask for it,
-`gqlfreez` adds it to paginate and removes it from the output. If you did ask for it, it is
-kept and updated to describe the joined result — and `hasNextPage` comes from the last page
-actually fetched, never set to `false` to look tidy.
+`pageInfo` does not turn pagination on, it is only a field. If you did not ask for it, `gqlfreez` adds it to paginate and removes it from the output. If you did ask for it, it is kept and updated to describe the joined result — and `hasNextPage` comes from the last page actually fetched, never set to `false` to look tidy.
 
-Forward pagination only. Connections next to each other each get their own query. A
-connection under a list — `posts { nodes { comments { nodes } } }` — cannot be paginated,
-and `gqlfreez` reports an error instead of writing only the first page.
+Forward pagination only. Connections next to each other each get their own query. A connection under a list — `posts { nodes { comments { nodes } } }` — cannot be paginated, and `gqlfreez` reports an error instead of writing only the first page.
 
-Paging stops at `--max-pages` (20, which is 2000 nodes with the default `--page-size` of
-100) and **fails** instead of writing an incomplete file. Raise both for a large archive.
+Paging stops at `--max-pages` (20, which is 2000 nodes with the default `--page-size` of 100) and **fails** instead of writing an incomplete file. Raise both for a large archive.
 
-> **Careful with silent limits.** Some servers cut a connection short without saying so:
-> WPGraphQL returns 100 nodes for `posts(first: 2000)`, with a normal HTTP 200 and no
-> error. `gqlfreez` cannot detect this — `hasNextPage` is the only reliable signal, and it
-> is only in the response if the query asked for it. Leave `first` out and you get
-> everything.
+> **Careful with silent limits.** Some servers cut a connection short without saying so: WPGraphQL returns 100 nodes for `posts(first: 2000)`, with a normal HTTP 200 and no error. `gqlfreez` cannot detect this — `hasNextPage` is the only reliable signal, and it is only in the response if the query asked for it. Leave `first` out and you get everything.
 
 ## One file per item
 
-Some generators, Zola and Jekyll for example, only create pages from files. For these
-generators, `gqlfreez` can also write one file per item of a list, with the item in the
-front matter. One query produces all the pages, and the build stays offline.
+Some generators, Zola and Jekyll for example, only create pages from files. For these generators, `gqlfreez` can also write one file per item of a list, with the item in the front matter. One query produces all the pages, and the build stays offline.
 
-To enable this, put a companion file next to the query. It has the same base name as the
-query, with the extension `.gqlfreez.yaml`, `.gqlfreez.yml` or `.gqlfreez.json`. No
-command-line flag is needed: the file alone turns this on.
+To enable this, put a companion file next to the query. It has the same base name as the query, with the extension `.gqlfreez.yaml`, `.gqlfreez.yml` or `.gqlfreez.json`. No command-line flag is needed: the file alone turns this on.
 
 ```yaml
 # data/posts.gqlfreez.yaml, next to data/posts.graphql
@@ -130,36 +101,19 @@ title = "Hello world"
 +++
 ```
 
-- **Slots**: `{slug}` or `{author.name}` inserts a field of the item, `{@item}` the whole
-  item, and `{@index}` its position in the list, starting at 0. Fields use dotted paths,
-  and a number selects a list element: `nodes.0.title`. Write `{{` and `}}` for literal
-  braces. A string that contains only a slot keeps the type of the value (an object, a
-  number). In any other string, the value is converted to text.
-- **Missing values are errors.** If a slot refers to a field that is missing or `null`,
-  the run stops with an error that names the item. The run also fails if two items produce
-  the same file name, ignoring case.
-- **Null values are removed** from the front matter. TOML has no null, and Zola converts
-  YAML front matter to TOML, so this applies to both formats.
-- **Only generated files are deleted.** Each generated file contains the line
-  `# generated by gqlfreez from <query>`. On the next run, files with this line that are
-  no longer produced are deleted. `_index.md` and files you wrote yourself are never
-  touched. If a generated file would overwrite one of them, the run fails.
-- **All or nothing.** Pages are written together with the JSON files, once every query has
-  succeeded. Unchanged pages are not rewritten. `--check` and `--dry-run` include pages in
-  their counts.
-- **Never outside the scanned directory.** `dir` must stay inside the directory passed to
-  `gqlfreez` (`Options.root` when used as a library). If pages go to `content/`, run
-  `gqlfreez` from the site root, not from `data/`.
-- **Use a stable field for `file`.** With `{@index}.md`, reordering the list rewrites
-  every page.
+- **Slots**: `{slug}` or `{author.name}` inserts a field of the item, `{@item}` the whole item, and `{@index}` its position in the list, starting at 0. Fields use dotted paths, and a number selects a list element: `nodes.0.title`. Write `{{` and `}}` for literal braces. A string that contains only a slot keeps the type of the value (an object, a number). In any other string, the value is converted to text.
+- **Missing values are errors.** If a slot refers to a field that is missing or `null`, the run stops with an error that names the item. The run also fails if two items produce the same file name, ignoring case.
+- **Null values are removed** from the front matter. TOML has no null, and Zola converts YAML front matter to TOML, so this applies to both formats.
+- **Only generated files are deleted.** Each generated file contains the line `# generated by gqlfreez from <query>`. On the next run, files with this line that are no longer produced are deleted. `_index.md` and files you wrote yourself are never touched. If a generated file would overwrite one of them, the run fails.
+- **All or nothing.** Pages are written together with the JSON files, once every query has succeeded. Unchanged pages are not rewritten. `--check` and `--dry-run` include pages in their counts.
+- **Never outside the scanned directory.** `dir` must stay inside the directory passed to `gqlfreez` (`Options.root` when used as a library). If pages go to `content/`, run `gqlfreez` from the site root, not from `data/`.
+- **Use a stable field for `file`.** With `{@index}.md`, reordering the list rewrites every page.
 
 The [Zola example](./examples/zola) uses this to write one page per country.
 
 ## Configuration
 
-`gqlfreez` reads your existing [graphql-config](https://the-guild.dev/graphql/config/docs).
-Declarative formats only (`.graphqlrc`, `.graphqlrc.{yml,yaml,json,toml}`,
-`graphql.config.*`) — a binary cannot run a `.js` / `.ts` config file.
+`gqlfreez` reads your existing [graphql-config](https://the-guild.dev/graphql/config/docs). Declarative formats only (`.graphqlrc`, `.graphqlrc.{yml,yaml,json,toml}`, `graphql.config.*`) — a binary cannot run a `.js` / `.ts` config file.
 
 ```yaml
 schema:
@@ -174,15 +128,11 @@ extensions:
         Authorization: "Bearer ${API_TOKEN}"
 ```
 
-Headers under `schema` are what give you autocompletion and schema checking inside
-`.graphql` files in VS Code and JetBrains. `${VAR}` and `${VAR:default}` are read from the
-environment, and from `.env` / `.env.local` unless you pass `--no-dotenv`.
+Headers under `schema` are what give you autocompletion and schema checking inside `.graphql` files in VS Code and JetBrains. `${VAR}` and `${VAR:default}` are read from the environment, and from `.env` / `.env.local` unless you pass `--no-dotenv`.
 
 ### Several data sources
 
-Each `.graphql` file uses the closest config: `gqlfreez` looks in the file's folder, then
-in each parent folder, up to the directory you passed. This lets one run freeze several
-APIs, each with its own URL and headers:
+Each `.graphql` file uses the closest config: `gqlfreez` looks in the file's folder, then in each parent folder, up to the directory you passed. This lets one run freeze several APIs, each with its own URL and headers:
 
 ```
 data/
@@ -198,10 +148,7 @@ data/
 gqlfreez .
 ```
 
-If there is no config between a file and that directory, `gqlfreez` searches from that
-directory upwards, which is the usual lookup for a project with one config. `--endpoint`
-applies to every file. In that case, folder configs are ignored, so their tokens are never
-sent to that endpoint. `--header` is sent to every source.
+If there is no config between a file and that directory, `gqlfreez` searches from that directory upwards, which is the usual lookup for a project with one config. `--endpoint` applies to every file. In that case, folder configs are ignored, so their tokens are never sent to that endpoint. `--header` is sent to every source.
 
 ## In CI
 
@@ -220,28 +167,19 @@ sent to that endpoint. `--header` is sent to every source.
 - run: npm run build     # or hugo, or zola build, or whatever you use
 ```
 
-Use a fixed version instead of `latest` if you want repeatable builds: replace
-`releases/latest/download` with `releases/download/v0.1.0`.
+Use a fixed version instead of `latest` if you want repeatable builds: replace `releases/latest/download` with `releases/download/v0.1.0`.
 
-Useful flags: `--check` fails when a frozen file is out of date, and writes nothing;
-`--dry-run` writes nothing at all; `--concurrency` defaults to `1` because shared WordPress
-hosting cannot take more; `--delay` waits between two paginated requests.
+Useful flags: `--check` fails when a frozen file is out of date, and writes nothing; `--dry-run` writes nothing at all; `--concurrency` defaults to `1` because shared WordPress hosting cannot take more; `--delay` waits between two paginated requests.
 
-Exit codes: `0` all good, `1` a query failed, `2` a configuration problem, `3` `--check`
-found a file out of date.
+Exit codes: `0` all good, `1` a query failed, `2` a configuration problem, `3` `--check` found a file out of date.
 
-If no query file is found, the CLI reports a configuration problem. The library function
-`run` returns `Error::NoQueries`, so you can tell an empty site from a broken setup.
+If no query file is found, the CLI reports a configuration problem. The library function `run` returns `Error::NoQueries`, so you can tell an empty site from a broken setup.
 
 ## What it does not do yet
 
-**Queries cannot take parameters yet.** To get one page per item, use
-[one file per item](#one-file-per-item): a single query fetches the whole list. Query
-variables (`post(slug: $slug)`) are next on the roadmap, for cases where a list query
-cannot return everything you need.
+**Queries cannot take parameters yet.** To get one page per item, use [one file per item](#one-file-per-item): a single query fetches the whole list. Query variables (`post(slug: $slug)`) are next on the roadmap, for cases where a list query cannot return everything you need.
 
-1. **Publish to npm and crates.io**, so `npx gqlfreez` and `cargo install gqlfreez` work
-   (the npm wrapper is written, in `wrappers/node`, but nothing is published yet)
+1. **Publish to npm and crates.io**, so `npx gqlfreez` and `cargo install gqlfreez` work (the npm wrapper is written, in `wrappers/node`, but nothing is published yet)
 2. Query variables
 3. Collect every error instead of stopping at the first one
 4. Full retry policy (exponential backoff, jitter)
@@ -252,15 +190,9 @@ cannot return everything you need.
 
 ## Prior art
 
-The shape of the tool — a single binary that reads and writes files instead of calling a
-generator's API — comes from [Pagebreak](https://github.com/CloudCannon/pagebreak) and
-[Pagefind](https://github.com/pagefind/pagefind). That is what lets one binary serve every
-ecosystem.
+The shape of the tool — a single binary that reads and writes files instead of calling a generator's API — comes from [Pagebreak](https://github.com/CloudCannon/pagebreak) and [Pagefind](https://github.com/pagefind/pagefind). That is what lets one binary serve every ecosystem.
 
-The pagination convention comes from
-[`@octokit/plugin-paginate-graphql`](https://github.com/octokit/plugin-paginate-graphql.js)
-and from [graphql-fetch-optimizer](https://github.com/internet2000/graphql-fetch-optimizer),
-an earlier tool for the same problem.
+The pagination convention comes from [`@octokit/plugin-paginate-graphql`](https://github.com/octokit/plugin-paginate-graphql.js) and from [graphql-fetch-optimizer](https://github.com/internet2000/graphql-fetch-optimizer), an earlier tool for the same problem.
 
 ## License
 
