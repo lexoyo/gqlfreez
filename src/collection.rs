@@ -476,9 +476,13 @@ fn check_file_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn context(item: &Value, index: usize) -> Context {
+    Context::from(json!({ "item": item, "index": index }))
+}
+
 impl Collection {
     fn render(&self, item: &Value, index: usize) -> Result<(String, String), String> {
-        let context = Context::from(json!({ "item": item, "index": index }));
+        let context = context(item, index);
         let name = self.file.text(&self.templates, &context)?;
         check_file_name(&name)?;
         let front_matter = without_nulls(Value::Object(fill_entries(
@@ -672,14 +676,10 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn context(item: Value, index: usize) -> Context {
-        Context::from(json!({ "item": item, "index": index }))
-    }
-
     fn typed(raw: &str, item: Value, index: usize) -> Result<Value, String> {
         let mut templates = registry();
         let t = Template::parse(raw, &mut templates).unwrap();
-        t.typed(&templates, &context(item, index))
+        t.typed(&templates, &context(&item, index))
     }
 
     #[test]
