@@ -1,0 +1,13 @@
+# One Zola page per country: gqlfreez writes content/countries/<code>.md from the frozen result.
+schema: https://countries.trevorblades.com/graphql
+extensions:
+  collections:
+    data/countries.graphql:
+      list: countries
+      dir: content/countries
+      file: "{{item.code}}.md"
+      frontMatter:
+        title: "{{item.name}}"
+        template: country.html
+        extra:
+          country: "{{item}}"
