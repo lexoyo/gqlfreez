@@ -932,6 +932,29 @@ fn the_endpoint_flag_wins_over_every_config() {
 }
 
 #[test]
+fn the_endpoint_flag_reads_no_config_at_all() {
+    let dir = scratch("sources-flag-root");
+    let configured = start(Behaviour::Simple);
+    graphqlrc(&dir, ".graphqlrc", &configured.endpoint(), "root-token");
+    put(
+        &dir,
+        "posts.graphql",
+        "{ posts(first: 1) { nodes { title } } }",
+    );
+    let forced = start(Behaviour::Simple);
+
+    ok(&gqlfreez(&dir, &forced.endpoint(), &[]));
+    assert_eq!(auth(&forced), [""]);
+    ok(&gqlfreez(
+        &dir,
+        &forced.endpoint(),
+        &["-H", "Authorization: Bearer cli"],
+    ));
+    assert_eq!(auth(&forced), ["", "Bearer cli"]);
+    assert_eq!(configured.calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
 fn a_header_flag_goes_to_every_source() {
     let (dir, wp, shop) = two_sources("sources-header");
     ok(&gqlfreez_from_configs(

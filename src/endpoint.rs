@@ -1,6 +1,7 @@
 //! Which endpoint each query file talks to, and with which headers.
 //!
-//! `--endpoint` applies to every file. Otherwise each file takes the graphql-config closest
+//! `--endpoint` applies to every file, with the `--header` values only: no graphql-config is
+//! read, so a token meant for another server never reaches the forced one. Otherwise each file takes the graphql-config closest
 //! to it, walking up no further than the root, so that one run can freeze several data
 //! sources. A file with no config of its own falls back on the one found from the root up.
 
@@ -23,6 +24,11 @@ pub struct Target {
 /// One target per query, in the same order. Resolved before any request: a missing endpoint
 /// must not surface after half the files were fetched.
 pub fn resolve(queries: &[Query], options: &Options, root: &Path) -> Result<Vec<Target>, Error> {
+    if let Some(url) = &options.endpoint {
+        let target = target(url.clone(), &[], &options.headers)?;
+        return Ok(vec![target; queries.len()]);
+    }
+
     // Looked up only when needed: a broken config above the root must not block a run
     // where every file has its own.
     let mut root_config: Option<Resolved> = None;
@@ -34,12 +40,6 @@ pub fn resolve(queries: &[Query], options: &Options, root: &Path) -> Result<Vec<
         root_config = Some(c.clone());
         Ok(c)
     };
-
-    if let Some(url) = &options.endpoint {
-        let config = from_root()?;
-        let target = target(url.clone(), &config.headers, &options.headers)?;
-        return Ok(vec![target; queries.len()]);
-    }
 
     let mut by_dir: HashMap<PathBuf, Target> = HashMap::new();
     let mut targets = vec![];
