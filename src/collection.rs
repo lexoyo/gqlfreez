@@ -4,7 +4,7 @@
 //! Everything is computed in memory first (`plan`), and only written by `stage` and
 //! `finish`, so a failure while planning leaves the tree untouched, as for the JSON output.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
@@ -84,23 +84,16 @@ pub fn resolve(
     configs: &[Arc<Resolved>],
     root: &Path,
 ) -> Result<Vec<Option<Arc<Collection>>>, Error> {
-    let mut by_config: HashMap<PathBuf, HashMap<PathBuf, String>> = HashMap::new();
+    let by_config = all_keys(queries, configs, root)?;
     let mut collections = vec![];
     for (q, config) in queries.iter().zip(configs) {
-        let Some(origin) = config
+        let Some((origin, keys)) = config
             .origin
             .as_ref()
-            .filter(|_| !config.collections.is_empty())
+            .and_then(|origin| by_config.get(origin).map(|keys| (origin, keys)))
         else {
             collections.push(None);
             continue;
-        };
-        let keys = match by_config.get(origin) {
-            Some(keys) => keys,
-            None => {
-                let keys = keys_of(origin, config)?;
-                by_config.entry(origin.clone()).or_insert(keys)
-            }
         };
         let source = q.source.canonicalize().map_err(|source| Error::Io {
             path: q.source.clone(),
@@ -118,6 +111,57 @@ pub fn resolve(
         });
     }
     Ok(collections)
+}
+
+/// The keys of every config with collections, by config file. Not only the configs the
+/// queries use: a key in a config no query uses would otherwise be ignored without a word.
+/// These are the configs between the root and the queries, and the one found from the root
+/// up.
+fn all_keys(
+    queries: &[Query],
+    configs: &[Arc<Resolved>],
+    root: &Path,
+) -> Result<HashMap<PathBuf, HashMap<PathBuf, String>>, Error> {
+    let mut read: HashMap<PathBuf, Arc<Resolved>> = configs
+        .iter()
+        .filter_map(|c| c.origin.clone().map(|origin| (origin, c.clone())))
+        .collect();
+    let mut files: BTreeSet<PathBuf> = read.keys().cloned().collect();
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+    for q in queries {
+        let dir = q
+            .source
+            .parent()
+            .and_then(|d| d.canonicalize().ok())
+            .unwrap_or_else(|| root.to_owned());
+        for current in dir.ancestors().take_while(|d| d.starts_with(root)) {
+            if !seen.insert(current.to_owned()) {
+                break;
+            }
+            files.extend(config::file_in(current)?);
+        }
+    }
+    // Above the root, a config no query uses must not block the run if it is broken.
+    if let Ok(Some(above)) = config::closest_file(root) {
+        if !files.contains(&above) {
+            if let Ok(c) = config::read(&above) {
+                read.insert(above.clone(), Arc::new(c));
+                files.insert(above);
+            }
+        }
+    }
+
+    let mut keys = HashMap::new();
+    for file in files {
+        let config = match read.get(&file) {
+            Some(c) => c.clone(),
+            None => Arc::new(config::read(&file)?),
+        };
+        if !config.collections.is_empty() {
+            keys.insert(file.clone(), keys_of(&file, &config)?);
+        }
+    }
+    Ok(keys)
 }
 
 /// Every key, by the canonical path of the query it names. A key must name a query file

@@ -154,7 +154,7 @@ fn in_dir(current: &Path) -> Result<Option<Resolved>, Error> {
     file_in(current)?.map(|path| read(&path)).transpose()
 }
 
-fn file_in(current: &Path) -> Result<Option<PathBuf>, Error> {
+pub fn file_in(current: &Path) -> Result<Option<PathBuf>, Error> {
     let found: Vec<PathBuf> = SEARCH_PLACES
         .iter()
         .map(|n| current.join(n))

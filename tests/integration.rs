@@ -974,7 +974,6 @@ fn a_collection_key_for_a_query_of_another_config_is_refused() {
         "data/.graphqlrc.json",
         &graphqlrc_json(json!({ "wp/article.graphql": collection }), None),
     );
-    put(&dir, "data/top.graphql", "{ posts { nodes { slug } } }");
     let stub = start(Behaviour::Data(posts(&["hello"])));
     let (status, err) = code(&gqlfreez(&dir, &stub.endpoint(), &[]));
     assert_eq!(status, Some(2), "{err}");
@@ -983,6 +982,30 @@ fn a_collection_key_for_a_query_of_another_config_is_refused() {
         "{err}"
     );
     assert!(err.contains("wp/.graphqlrc.json instead"), "{err}");
+    assert_eq!(stub.calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn a_collection_key_in_a_config_no_query_uses_is_still_checked() {
+    let dir = site("collection-unused-config", article_collection());
+    put(
+        &dir,
+        ".graphqlrc.yml",
+        "extensions:\n\
+         \x20 collections:\n\
+         \x20   typo.graphql:\n\
+         \x20     list: posts.nodes\n\
+         \x20     dir: content/article\n\
+         \x20     file: \"{{item.slug}}.md\"\n\
+         \x20     frontMatter: {}\n",
+    );
+    let stub = start(Behaviour::Data(posts(&["hello"])));
+    let (status, err) = code(&gqlfreez(&dir, &stub.endpoint(), &[]));
+    assert_eq!(status, Some(2), "{err}");
+    assert!(
+        err.contains("\"typo.graphql\" names no query file"),
+        "{err}"
+    );
     assert_eq!(stub.calls.load(Ordering::SeqCst), 0);
 }
 
