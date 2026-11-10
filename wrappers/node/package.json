@@ -8,7 +8,7 @@
     "url": "git+https://github.com/lexoyo/gqlfreez.git"
   },
   "author": "Alex Hoyau",
-  "license": "GPL-3.0",
+  "license": "EUPL-1.2",
   "optionalDependencies": {
     "@gqlfreez/linux-x64": "0.0.0",
     "@gqlfreez/linux-arm64": "0.0.0",
