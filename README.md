@@ -176,7 +176,7 @@ gqlfreez .
 - run: npm run build     # or hugo, or zola build, or whatever you use
 ```
 
-Use a fixed version instead of `latest` if you want repeatable builds: replace `releases/latest/download` with `releases/download/v0.1.0`.
+Use a fixed version instead of `latest` if you want repeatable builds: replace `releases/latest/download` with `releases/download/v0.2.0`.
 
 Useful flags: `--check` fails when a frozen file is out of date, and writes nothing; `--dry-run` writes nothing at all; `--concurrency` defaults to `1` because shared WordPress hosting cannot take more; `--delay` waits between two paginated requests.
 
