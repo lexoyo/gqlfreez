@@ -1,0 +1,10 @@
+# One Zola page per country: gqlfreez writes content/countries/<code>.md from the frozen result.
+split:
+  list: countries
+  dir: ../content/countries
+  file: "{code}.md"
+  frontMatter:
+    title: "{emoji} {name}"
+    template: country.html
+    extra:
+      country: "{@item}"

@@ -1,12 +1,12 @@
-{% set data = load_data(path="data/countries.json") %}
+{% set countries = get_section(path="countries/_index.md") %}
 <!doctype html>
 <html lang="en">
   <head><meta charset="utf-8"><title>Countries</title></head>
   <body>
-    <h1>{{ data.countries | length }} countries</h1>
+    <h1>{{ countries.pages | length }} countries</h1>
     <ul>
-      {% for country in data.countries | slice(end=20) %}
-        <li>{{ country.emoji }} {{ country.name }} — {{ country.continent.name }}</li>
+      {% for page in countries.pages %}
+        <li><a href="{{ page.permalink }}">{{ page.title }}</a></li>
       {% endfor %}
     </ul>
   </body>

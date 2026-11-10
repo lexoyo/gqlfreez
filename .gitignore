@@ -11,3 +11,5 @@ examples/eleventy/package-lock.json
 examples/eleventy/src/_data/*.json
 examples/zola/public
 examples/zola/data/*.json
+examples/zola/content/countries/*.md
+!examples/zola/content/countries/_index.md

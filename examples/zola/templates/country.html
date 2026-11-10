@@ -1,0 +1,9 @@
+{% set country = page.extra.country %}
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>{{ country.name }}</title></head>
+  <body>
+    <h1>{{ page.title }}</h1>
+    <p>{{ country.name }} is in {{ country.continent.name }}. Its code is {{ country.code }}.</p>
+  </body>
+</html>
