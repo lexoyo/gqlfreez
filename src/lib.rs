@@ -98,7 +98,6 @@ pub async fn run(options: &Options) -> Result<Vec<FileResult>, Error> {
             })
         })
         .collect::<Result<Vec<_>, Error>>()?;
-    // Configs are read before any request: a typo in one must not cost a full fetch.
     let configs = config::search(&canonical, &root)?;
     let collections = collection::resolve(&canonical, &configs, &root)?;
     let targets = endpoint::resolve(&queries, &configs.closest, options)?;

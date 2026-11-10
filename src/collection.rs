@@ -377,7 +377,7 @@ fn fill_entries(
         .collect()
 }
 
-/// Zola converts a YAML front matter to TOML, which has no null.
+/// Zola refuses null values in front matter.
 fn without_nulls(value: Value) -> Value {
     match value {
         Value::Object(map) => Value::Object(
