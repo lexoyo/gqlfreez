@@ -77,8 +77,8 @@ impl Plan {
 }
 
 /// The collection of each query, in the same order. A key must name a query found by this
-/// run whose closest config is this one: otherwise it would be silently ignored. `root` and
-/// the queries must be canonical.
+/// run whose closest config is this one: otherwise it would be silently ignored. A key naming
+/// a file outside `root` belongs to another run. `root` and the queries must be canonical.
 pub fn resolve(
     queries: &[Query],
     configs: &[Arc<Resolved>],
@@ -109,11 +109,11 @@ pub fn resolve(
                 ));
             }
             let path = base.join(requested);
-            let Some(i) = path
-                .canonicalize()
-                .ok()
-                .and_then(|p| by_source.get(p.as_path()).copied())
-            else {
+            let canonical = path.canonicalize().ok();
+            if canonical.as_ref().is_some_and(|p| !p.starts_with(root)) {
+                continue;
+            }
+            let Some(i) = canonical.and_then(|p| by_source.get(p.as_path()).copied()) else {
                 return Err(fail(format!(
                     "names no query file found by this run at {}",
                     path.display()

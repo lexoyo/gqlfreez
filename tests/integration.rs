@@ -863,6 +863,24 @@ fn a_collection_key_in_a_config_no_query_uses_is_still_checked() {
 }
 
 #[test]
+fn a_collection_key_for_a_query_outside_the_root_is_left_to_its_own_run() {
+    let dir = scratch("collection-key-outside-root");
+    write(&dir, "data/article.graphql", ARTICLE_QUERY);
+    write(&dir, "other/article.graphql", ARTICLE_QUERY);
+    let mut collection = article_collection();
+    collection["dir"] = json!("content/article");
+    write(
+        &dir,
+        ".graphqlrc.json",
+        &graphqlrc_json(json!({ "other/article.graphql": collection }), None),
+    );
+    let stub = start(Behaviour::Data(posts(&["hello"])));
+    ok(&gqlfreez(&dir.join("data"), &stub.endpoint(), &[]));
+    assert!(dir.join("data/article.json").exists());
+    assert!(!dir.join("content").exists());
+}
+
+#[test]
 fn a_collection_key_must_be_relative_with_forward_slashes() {
     let dir = site("collection-key-shape", article_collection());
     let absolute = dir.join("data/wp/article.graphql");
