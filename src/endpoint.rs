@@ -1,9 +1,10 @@
 //! Which endpoint each query file talks to, and with which headers.
 //!
 //! `--endpoint` applies to every file, with the `--header` values only: no graphql-config is
-//! read, so a token meant for another server never reaches the forced one. Otherwise each file takes the graphql-config closest
-//! to it, walking up no further than the root, so that one run can freeze several data
-//! sources. A file with no config of its own falls back on the one found from the root up.
+//! read, so a token meant for another server never reaches the forced one. Otherwise each
+//! file takes the graphql-config closest to it, walking up no further than the root, so
+//! that one run can freeze several data sources. A file with no config of its own falls
+//! back on the one found from the root up.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

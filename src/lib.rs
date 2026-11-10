@@ -159,7 +159,8 @@ pub async fn run(options: &Options) -> Result<Vec<FileResult>, Error> {
 }
 
 /// Fetch one file, and plan its pages if it has a companion. The pages are kept in memory
-/// until the commit, so that they are written all together or not at all.
+/// until the commit, so that nothing is written unless every query succeeded. A disk error
+/// while the files are moved into place can still leave some of them updated.
 async fn one(
     client: &reqwest::Client,
     options: &Options,

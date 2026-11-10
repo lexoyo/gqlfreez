@@ -540,7 +540,7 @@ impl Split {
             // Planning zero pages would delete every page of this query.
             Found::Null => {
                 return Err(fail(format!(
-                    "list: {} is null in the result of {}, nothing is written nor removed",
+                    "list: {} is null in the result of {}, nothing is written or removed",
                     self.list.join("."),
                     self.query.display()
                 )))
