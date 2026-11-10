@@ -190,6 +190,12 @@ fn load(
     let fail = |message: String| {
         Error::Config(format!("{}: collection {key}: {message}", origin.display()))
     };
+    if raw.list.split('.').any(str::is_empty) {
+        return Err(fail(format!(
+            "list: {:?} is not a path like posts.nodes",
+            raw.list
+        )));
+    }
     let mut templates = registry();
     let file =
         Template::parse(&raw.file, &mut templates).map_err(|e| fail(format!("file: {e}")))?;
