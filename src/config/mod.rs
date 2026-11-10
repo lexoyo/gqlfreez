@@ -253,7 +253,7 @@ fn flatten_projects(cfg: GraphqlConfig, path: &Path) -> Result<GraphqlConfig, Er
     }
     Err(Error::Config(format!(
         "{}: multi-project configs are not supported yet ({} projects). \
-         Pass --endpoint, or keep a single project.",
+         Keep a single project.",
         path.display(),
         projects.len()
     )))
