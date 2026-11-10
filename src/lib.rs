@@ -195,8 +195,8 @@ enum Fetched {
     Done(Outcome),
 }
 
-/// The rendered JSON is staged in a temporary file, so memory stays bounded to a single
-/// response rather than the whole tree.
+/// The rendered JSON is staged in a temporary file. A result with a companion also stays in
+/// memory, with its pages, until the commit.
 async fn fetch(
     client: &reqwest::Client,
     options: &Options,

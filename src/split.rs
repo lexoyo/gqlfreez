@@ -1,8 +1,8 @@
 //! One file per item of a list in the frozen result, described by the companion file
 //! `<query>.gqlfreez.{json,yaml,yml}` next to the query.
 //!
-//! Everything is computed in memory first (`plan`), and only written by `apply`, so a
-//! failure anywhere leaves the tree untouched, as for the JSON output.
+//! Everything is computed in memory first (`plan`), and only written by `stage` and
+//! `finish`, so a failure while planning leaves the tree untouched, as for the JSON output.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
