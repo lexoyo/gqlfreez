@@ -99,10 +99,8 @@ pub fn load(companion: &Path, query: &Path, root: &Path) -> Result<Option<Split>
         path: companion.to_owned(),
         message,
     };
-    let text = std::fs::read_to_string(companion).map_err(|source| Error::Io {
-        path: companion.to_owned(),
-        source,
-    })?;
+    let text =
+        std::fs::read_to_string(companion).map_err(|e| fail(format!("cannot be read: {e}")))?;
     let is_json = companion.extension().is_some_and(|e| e == "json");
     let raw: RawCompanion = if is_json {
         serde_json::from_str(&text).map_err(|e| fail(e.to_string()))?
@@ -133,15 +131,11 @@ pub fn load(companion: &Path, query: &Path, root: &Path) -> Result<Option<Split>
         .parent()
         .unwrap_or(Path::new("."))
         .canonicalize()
-        .map_err(|source| Error::Io {
-            path: companion.to_owned(),
-            source,
-        })?;
+        .map_err(|e| fail(format!("its folder cannot be resolved: {e}")))?;
     let dir = confine(&base, &raw.dir, root).map_err(fail)?;
-    let canonical = query.canonicalize().map_err(|source| Error::Io {
-        path: query.to_owned(),
-        source,
-    })?;
+    let canonical = query
+        .canonicalize()
+        .map_err(|e| fail(format!("{} cannot be resolved: {e}", query.display())))?;
     let owner = relative(&dir, &canonical);
 
     Ok(Some(Split {

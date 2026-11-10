@@ -659,6 +659,21 @@ fn split_companion_typo_is_refused_before_any_request() {
 }
 
 #[test]
+fn an_unreadable_companion_is_a_configuration_problem() {
+    let dir = site("split-unreadable", article_split());
+    std::fs::write(dir.join("data/wp/article.gqlfreez.json"), b"\xff\xfe").unwrap();
+    let stub = start(Behaviour::Data(posts(&["hello"])));
+    let out = gqlfreez(&dir, &stub.endpoint(), &[]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{err}");
+    assert!(
+        err.contains("article.gqlfreez.json: cannot be read"),
+        "{err}"
+    );
+    assert_eq!(stub.calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
 fn split_check_and_dry_run_count_pages_without_writing() {
     let dir = site("split-check", article_split());
     let stub = start(Behaviour::Data(posts(&["hello", "world"])));
