@@ -729,6 +729,45 @@ fn split_two_queries_writing_the_same_page_write_nothing() {
 }
 
 #[test]
+fn split_moves_a_page_from_one_query_to_another_in_one_run() {
+    let dir = scratch("split-move");
+    for name in ["a", "b"] {
+        put(
+            &dir,
+            &format!("data/{name}.graphql"),
+            &format!("{{ {name} {{ nodes {{ slug }} }} }}"),
+        );
+        let mut companion = article_split();
+        companion["split"]["list"] = json!(format!("{name}.nodes"));
+        companion["split"]["dir"] = json!("../content/article");
+        companion["split"]["frontMatter"] = json!({"slug": "{slug}"});
+        put(
+            &dir,
+            &format!("data/{name}.gqlfreez.json"),
+            &companion.to_string(),
+        );
+    }
+    let hello = json!({"nodes": [{"slug": "hello"}]});
+    let none = json!({"nodes": []});
+    let stub = start(Behaviour::Data(json!({"a": hello, "b": none})));
+    ok(&gqlfreez(&dir, &stub.endpoint(), &[]));
+    assert!(read(&dir, "content/article/hello.md").contains("from ../../data/a.graphql"));
+
+    let stub = start(Behaviour::Data(json!({"a": none, "b": hello})));
+    ok(&gqlfreez(&dir, &stub.endpoint(), &[]));
+    assert!(read(&dir, "content/article/hello.md").contains("from ../../data/b.graphql"));
+
+    let stub = start(Behaviour::Data(json!({"a": hello, "b": hello})));
+    let out = gqlfreez(&dir, &stub.endpoint(), &[]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{err}");
+    assert!(
+        err.contains("is already written from ../../data/b.graphql"),
+        "{err}"
+    );
+}
+
+#[test]
 fn split_of_a_null_list_writes_and_removes_nothing() {
     let dir = site("split-null-list", article_split());
     let stub = start(Behaviour::Data(posts(&["hello"])));

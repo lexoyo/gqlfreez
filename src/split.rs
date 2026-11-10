@@ -72,6 +72,9 @@ pub struct Plan {
     pub writes: Vec<(PathBuf, String)>,
     pub removals: Vec<PathBuf>,
     pub unchanged: usize,
+    /// Pages written by another query that still exists, with its name: only allowed if
+    /// that query's own plan removes them in the same run.
+    pub takeovers: Vec<(PathBuf, String)>,
 }
 
 /// Pages written, left alone and removed for one query. In `--check` and `--dry-run`,
@@ -600,10 +603,7 @@ impl Split {
                         )))
                     }
                     Some(owner) if *owner != self.owner && self.is_claimed(owner) => {
-                        return Err(fail(format!(
-                            "{} is already written from {owner}",
-                            entry.path.display()
-                        )))
+                        plan.takeovers.push((entry.path.clone(), owner.clone()));
                     }
                     _ => {}
                 }
@@ -822,8 +822,18 @@ pub fn finish(plans: &[(usize, &Plan)]) -> Result<(), (usize, Error)> {
     Ok(())
 }
 
-/// Two queries writing the same page, found once every plan is known.
+/// Two queries writing the same page, found once every plan is known. A page moves from
+/// one query to another only when the first one no longer produces it.
 pub fn check_overlap(plans: &[(usize, &Plan)]) -> Option<(usize, String)> {
+    let removed: HashSet<&PathBuf> = plans.iter().flat_map(|(_, p)| &p.removals).collect();
+    for (index, plan) in plans {
+        if let Some((path, owner)) = plan.takeovers.iter().find(|(p, _)| !removed.contains(p)) {
+            return Some((
+                *index,
+                format!("{} is already written from {owner}", path.display()),
+            ));
+        }
+    }
     let mut seen: HashSet<String> = HashSet::new();
     for (index, plan) in plans {
         for (path, _) in &plan.writes {
