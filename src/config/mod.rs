@@ -189,8 +189,7 @@ fn file_in(current: &Path) -> Result<Option<PathBuf>, Error> {
     if !unsupported.is_empty() {
         return Err(Error::Config(format!(
             "found {} in {}, which gqlfreez cannot evaluate (it is a binary, not a JS runtime).\n\
-             Use a declarative config instead: {}.\n\
-             Or pass --endpoint directly.",
+             Use a declarative config instead: {}.",
             unsupported.join(", "),
             current.display(),
             SEARCH_PLACES.join(", ")
