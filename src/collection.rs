@@ -202,19 +202,13 @@ fn load(
     let mut templates = registry();
     let file =
         Template::parse(&raw.file, &mut templates).map_err(|e| fail(format!("file: {e}")))?;
-    let Value::Object(front_matter) = raw.front_matter.clone() else {
+    let Shape::Object(front_matter) = Shape::parse(raw.front_matter.clone(), &mut templates)
+        .map_err(|e| fail(format!("frontMatter{e}")))?
+    else {
         return Err(fail(
             "frontMatter must be an object (a front matter is a table of keys)".into(),
         ));
     };
-    let front_matter = front_matter
-        .into_iter()
-        .map(|(k, v)| {
-            Shape::parse(v, &mut templates)
-                .map(|s| (k.clone(), s))
-                .map_err(|e| fail(format!("frontMatter.{k}: {e}")))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
 
     let base = origin.parent().unwrap_or(Path::new("/"));
     let dir = confine(base, &raw.dir, root).map_err(fail)?;
@@ -396,10 +390,16 @@ enum Shape {
 impl Shape {
     fn parse(value: Value, templates: &mut Handlebars<'static>) -> Result<Self, String> {
         Ok(match value {
-            Value::String(s) => Shape::Template(Template::parse(&s, templates)?),
+            Value::String(s) => {
+                Shape::Template(Template::parse(&s, templates).map_err(|e| format!(": {e}"))?)
+            }
             Value::Object(map) => Shape::Object(
                 map.into_iter()
-                    .map(|(k, v)| Shape::parse(v, templates).map(|s| (k, s)))
+                    .map(|(k, v)| {
+                        Shape::parse(v, templates)
+                            .map(|s| (k.clone(), s))
+                            .map_err(|e| format!(".{k}{e}"))
+                    })
                     .collect::<Result<_, _>>()?,
             ),
             Value::Array(items) => Shape::Array(
