@@ -108,16 +108,6 @@ pub struct Resolved {
     pub collections: BTreeMap<String, CollectionConfig>,
 }
 
-/// Find and read a config file, starting at `from` and walking up to the filesystem root.
-pub fn discover(from: &Path) -> Result<Resolved, Error> {
-    for dir in from.ancestors() {
-        if let Some(file) = file_in(dir)? {
-            return read(&file);
-        }
-    }
-    Ok(Resolved::default())
-}
-
 /// The configs of a run, each read once.
 #[derive(Default)]
 pub(crate) struct Configs {
