@@ -22,6 +22,10 @@ pub enum Error {
     #[error("{path}: {message}")]
     GraphQl { path: PathBuf, message: String },
 
+    /// A companion file that cannot be applied: its own content, or the result it splits.
+    #[error("{path}: {message}")]
+    Split { path: PathBuf, message: String },
+
     #[error("config: {0}")]
     Config(String),
 }

@@ -152,7 +152,14 @@ async fn main() -> ExitCode {
     let mut unchanged = 0;
     let mut would = 0;
     let mut skipped = 0;
+    let mut split: Option<gqlfreez::SplitReport> = None;
     for r in &results {
+        if let Some(report) = r.split {
+            let total = split.get_or_insert_with(Default::default);
+            total.written += report.written;
+            total.unchanged += report.unchanged;
+            total.removed += report.removed;
+        }
         match &r.outcome {
             Outcome::Frozen { pages } => {
                 frozen += 1;
@@ -179,14 +186,28 @@ async fn main() -> ExitCode {
     if skipped > 0 {
         summary.push_str(&format!(", {skipped} skipped"));
     }
+    if let Some(s) = split {
+        summary.push_str(&if cli.check || cli.dry_run {
+            format!(
+                ", {} page(s) would be written, {} removed",
+                s.written, s.removed
+            )
+        } else {
+            format!(", {} page(s) written, {} removed", s.written, s.removed)
+        });
+    }
     logger.status(&format!(
         "{summary} — finished in {}.{:03}s",
         elapsed.as_secs(),
         elapsed.subsec_millis()
     ));
 
-    if cli.check && would > 0 {
-        eprintln!("gqlfreez: {would} file(s) are out of date — run gqlfreez to refresh them");
+    let pages = split.map_or(0, |s| s.written + s.removed);
+    if cli.check && (would > 0 || pages > 0) {
+        eprintln!(
+            "gqlfreez: {} file(s) are out of date — run gqlfreez to refresh them",
+            would + pages
+        );
         return ExitCode::from(exit::CHANGED);
     }
     ExitCode::from(exit::OK)

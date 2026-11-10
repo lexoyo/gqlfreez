@@ -24,7 +24,7 @@ pub fn render(value: &Value) -> String {
 
 use serde::Serialize;
 
-fn sorted(value: &Value) -> Value {
+pub(crate) fn sorted(value: &Value) -> Value {
     match value {
         Value::Object(map) => {
             let mut out = serde_json::Map::new();
