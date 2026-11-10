@@ -257,4 +257,4 @@ an earlier tool for the same problem.
 
 ## License
 
-GPL-3.0
+EUPL-1.2

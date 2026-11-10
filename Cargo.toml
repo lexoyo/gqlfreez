@@ -5,7 +5,7 @@ edition = "2021"
 description = "Freeze GraphQL query results into JSON files, next to the queries."
 homepage = "https://github.com/lexoyo/gqlfreez"
 repository = "https://github.com/lexoyo/gqlfreez"
-license = "GPL-3.0"
+license = "EUPL-1.2"
 keywords = ["graphql", "static-site", "jamstack", "build", "cli"]
 categories = ["command-line-utilities", "web-programming"]
 
