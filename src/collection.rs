@@ -26,7 +26,6 @@ pub struct Collection {
     /// The config file the entry comes from.
     origin: PathBuf,
     key: String,
-    query: PathBuf,
     list: String,
     /// Absolute, normalized, checked to be under the root.
     dir: PathBuf,
@@ -156,7 +155,6 @@ fn load(
     Ok(Collection {
         origin: origin.to_owned(),
         key: key.to_owned(),
-        query: query.source.clone(),
         list: raw.list.clone(),
         dir,
         file,
@@ -482,9 +480,8 @@ impl Collection {
             // Planning zero pages would delete every page of this query.
             Some(Value::Null) => {
                 return Err(self.error(format!(
-                    "list: {} is null in the result of {}, nothing is written or removed",
-                    self.list,
-                    self.query.display()
+                    "list: {} is null in the result, nothing is written or removed",
+                    self.list
                 )))
             }
             Some(_) => return Err(self.error(format!("list: {} is not a list", self.list))),
