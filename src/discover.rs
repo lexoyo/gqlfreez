@@ -31,20 +31,6 @@ pub struct Query {
 
 /// Walk `root` for query files, sorted, with output collisions rejected up front.
 pub fn find(root: &Path, glob: &str) -> Result<Vec<Query>, Error> {
-    let found = walk(root, glob)?;
-
-    let queries: Vec<Query> = found
-        .into_iter()
-        .map(|source| Query {
-            output: source.with_extension("json"),
-            source,
-        })
-        .collect();
-    check_collisions(&queries)?;
-    Ok(queries)
-}
-
-fn walk(root: &Path, glob: &str) -> Result<Vec<PathBuf>, Error> {
     let mut overrides = OverrideBuilder::new(root);
     overrides
         .add(glob)
@@ -78,7 +64,17 @@ fn walk(root: &Path, glob: &str) -> Result<Vec<PathBuf>, Error> {
     // Deterministic order: with fail-fast, an unsorted walk reports a different error on
     // every run when several files are broken.
     found.sort();
-    Ok(found)
+
+    let queries: Vec<Query> = found
+        .into_iter()
+        .map(|source| {
+            let output = source.with_extension("json");
+            Query { source, output }
+        })
+        .collect();
+
+    check_collisions(&queries)?;
+    Ok(queries)
 }
 
 /// Two sources mapping to the same `.json` — including through case-insensitive filesystems.
