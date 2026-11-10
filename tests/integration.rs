@@ -1010,6 +1010,27 @@ fn a_collection_key_in_a_config_no_query_uses_is_still_checked() {
 }
 
 #[test]
+fn a_collection_key_must_be_relative_with_forward_slashes() {
+    let dir = site("collection-key-shape", article_collection());
+    let absolute = dir.join("data/wp/article.graphql");
+    for key in [absolute.to_str().unwrap(), "sub\\article.graphql"] {
+        put(
+            &dir,
+            "data/wp/.graphqlrc.json",
+            &graphqlrc_json(json!({ key: article_collection() }), None),
+        );
+        let stub = start(Behaviour::Data(posts(&["hello"])));
+        let (status, err) = code(&gqlfreez(&dir, &stub.endpoint(), &[]));
+        assert_eq!(status, Some(2), "{key}: {err}");
+        assert!(
+            err.contains("must be relative to the config file's folder, with forward slashes"),
+            "{err}"
+        );
+        assert_eq!(stub.calls.load(Ordering::SeqCst), 0);
+    }
+}
+
+#[test]
 fn dir_is_relative_to_the_config_folder() {
     let dir = scratch("collection-config-folder");
     put(&dir, "data/wp/article.graphql", ARTICLE_QUERY);

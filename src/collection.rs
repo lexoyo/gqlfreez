@@ -179,7 +179,16 @@ fn keys_of(origin: &Path, config: &Resolved) -> Result<HashMap<PathBuf, String>,
                 origin.display()
             ))
         };
-        let path = base.join(key);
+        let requested = Path::new(key);
+        if requested.has_root()
+            || matches!(requested.components().next(), Some(Component::Prefix(_)))
+            || key.contains('\\')
+        {
+            return Err(fail(
+                "must be relative to the config file's folder, with forward slashes".into(),
+            ));
+        }
+        let path = base.join(requested);
         let is_query = path
             .extension()
             .is_some_and(|e| QUERY_EXTENSIONS.iter().any(|q| e == *q));
