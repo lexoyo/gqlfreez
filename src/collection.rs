@@ -454,7 +454,7 @@ impl Template {
         for slot in &self.slots {
             if let Value::Object(_) | Value::Array(_) = field(context.data(), slot)? {
                 return Err(format!(
-                    "{{{{{}}}}} is an object or a list, it cannot go inside a text",
+                    "{{{{{}}}}} is an object or a list, it cannot be inserted into a string",
                     slot.raw
                 ));
             }
