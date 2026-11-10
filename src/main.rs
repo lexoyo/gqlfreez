@@ -191,7 +191,7 @@ async fn main() -> ExitCode {
     if let Some(s) = split {
         summary.push_str(&if cli.check || cli.dry_run {
             format!(
-                ", {} page(s) would be written, {} removed",
+                ", {} page(s) would be written, {} would be removed",
                 s.written, s.removed
             )
         } else {

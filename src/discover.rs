@@ -107,7 +107,7 @@ fn check_orphan_companions(root: &Path) -> Result<(), Error> {
         });
         if !has_query {
             return Err(Error::Config(format!(
-                "{}: no query next to it, expected {query_stem}.graphql",
+                "{}: no query next to it, expected {query_stem}.graphql or {query_stem}.gql",
                 companion.display()
             )));
         }
