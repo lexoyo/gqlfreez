@@ -67,6 +67,12 @@ pub fn client(options: &Options) -> Result<reqwest::Client, Error> {
         ),
     );
 
+    let roots = webpki_root_certs::TLS_SERVER_ROOT_CERTS
+        .iter()
+        .map(|cert| reqwest::Certificate::from_der(cert))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| Error::Config(format!("could not read the root certificates: {e}")))?;
+
     reqwest::Client::builder()
         .default_headers(headers)
         .connect_timeout(options.connect_timeout)
@@ -74,6 +80,8 @@ pub fn client(options: &Options) -> Result<reqwest::Client, Error> {
         // A 301 turns a POST into a GET and yields the site's home page as HTML with a 200.
         .redirect(reqwest::redirect::Policy::none())
         .user_agent(concat!("gqlfreez/", env!("CARGO_PKG_VERSION")))
+        // A CI image may have no root certificates at all, like node:22-slim
+        .tls_certs_merge(roots)
         .build()
         .map_err(|e| Error::Config(format!("could not build the HTTP client: {e}")))
 }

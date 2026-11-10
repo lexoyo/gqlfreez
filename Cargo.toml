@@ -1,6 +1,6 @@
 [package]
 name = "gqlfreez"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "Freeze GraphQL query results into JSON files, next to the queries."
 homepage = "https://github.com/lexoyo/gqlfreez"
@@ -29,3 +29,4 @@ serde-saphyr = { version = "0.0.29", default-features = false, features = ["seri
 serde_yaml_ng = "0.10.0"
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "fs", "sync", "time"] }
+webpki-root-certs = "1.0.11"

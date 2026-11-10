@@ -210,6 +210,31 @@ fn writes_data_next_to_the_query() {
     );
 }
 
+// Elsewhere the system store does not read SSL_CERT_FILE
+#[cfg(target_os = "linux")]
+#[test]
+fn runs_on_a_machine_without_root_certificates() {
+    let dir = scratch("no-certificates");
+    let stub = start(Behaviour::Simple);
+    write(
+        &dir,
+        "posts.graphql",
+        "{ posts(first: 1) { nodes { title } } }",
+    );
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_gqlfreez"))
+        .args([
+            dir.to_str().unwrap(),
+            "--no-dotenv",
+            "--endpoint",
+            &stub.endpoint(),
+        ])
+        // Replaces the system store: pointed at nothing, it leaves no roots
+        .env("SSL_CERT_FILE", dir.join("none.pem"))
+        .output()
+        .expect("run gqlfreez");
+    ok(&out);
+}
+
 #[test]
 fn walks_every_page_and_merges_nodes() {
     let dir = scratch("paginate");
